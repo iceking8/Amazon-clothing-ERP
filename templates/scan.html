@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}扫码查询 - 服装 ERP{% endblock %}
+{% block page_title %}扫码查询{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-header"><h2>条码 / SKU 查询</h2></div>
+  <form method="get" class="inline-form filter-bar">
+    <input name="q" value="{{ q }}" placeholder="扫描条码，或输入 SKU 编码 / 商品名称" style="flex:1; min-width: 200px;" autofocus>
+    <button class="button" type="submit">查询</button>
+    {% if q %}
+    <a class="button ghost" href="{{ url_for('scan_lookup') }}">清除</a>
+    {% endif %}
+  </form>
+</section>
+
+{% if q %}
+<section class="panel">
+  <div class="panel-header"><h2>查询结果</h2></div>
+  {% if sku %}
+  <div class="stack-item" style="margin-bottom: 16px;">
+    <strong>{{ sku.name }}</strong>
+    <p>{{ sku.sku_code }} / 条码：{{ sku.barcode }}</p>
+    <small>
+      颜色：{{ sku.color or "-" }} / 尺码：{{ sku.size or "-" }}
+      {% if can_view_prices() %} / 售价：{{ "%.2f"|format(sku.sale_price) }}{% endif %}
+    </small>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>仓库</th><th>当前库存</th></tr></thead>
+      <tbody>
+        {% for row in warehouse_rows %}
+        <tr class="{% if row.quantity == 0 %}table-warn{% endif %}">
+          <td>{{ row.warehouse.name }}</td>
+          <td>{{ row.quantity }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">没有找到匹配的商品，请检查条码或 SKU 编码是否正确。</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

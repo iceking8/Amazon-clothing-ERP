@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}次品返修 - 服装 ERP{% endblock %}
+{% block page_title %}次品返修{% endblock %}
+{% block content %}
+<section class="layout-two defect-layout">
+  <article class="panel defect-create-panel">
+    <div class="panel-header"><h2>新建返修单</h2></div>
+    <form method="post" class="form-grid single defect-create-form">
+      {{ csrf_field() }}
+      <datalist id="defect-sku-options">
+        {% for sku in skus %}
+        <option value="{{ sku.sku_code }} - {{ sku.name }} / {{ sku.color }} / {{ sku.size }}" data-sku-id="{{ sku.id }}"></option>
+        {% endfor %}
+      </datalist>
+      <label><span>返修单号</span><input name="repair_no" placeholder="留空自动生成"></label>
+      <label><span>商品（SKU）</span>
+        <div class="sku-picker" data-sku-picker>
+          <input type="hidden" name="sku_id" data-sku-picker-value>
+          <input type="search" list="defect-sku-options" placeholder="搜索 SKU 编码 / 名称 / 颜色 / 尺码" autocomplete="off" data-sku-picker-input data-sku-picker-required="true" required>
+        </div>
+      </label>
+      <label><span>仓库</span>
+        <select name="warehouse_id" required>
+          <option value="">请选择仓库</option>
+          {% for warehouse in warehouses %}
+          <option value="{{ warehouse.id }}">{{ warehouse.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="mini-field-grid">
+        <label><span>次品数量</span><input name="quantity" type="number" min="1" required placeholder="数量"></label>
+        <label><span>处理状态</span>
+          <select name="status">
+            <option value="pending">待处理</option>
+            <option value="repairing">返修中</option>
+            <option value="done">已完成</option>
+            <option value="scrapped">已报废</option>
+          </select>
+        </label>
+      </div>
+      <div class="mini-field-grid">
+        <label><span>成功入库</span><input name="completed_quantity" type="number" min="0" placeholder="如：32"></label>
+        <label><span>报废数量</span><input name="scrapped_quantity" type="number" min="0" placeholder="如：2"></label>
+      </div>
+      <label class="full"><span>次品原因</span><textarea name="defect_reason" required placeholder="请描述次品原因"></textarea></label>
+      <label class="full"><span>返修结果</span><textarea name="repair_result" placeholder="可选，填写返修处理结果"></textarea></label>
+      <button class="button full" type="submit">保存返修单</button>
+    </form>
+  </article>
+  <article class="panel defect-list-panel">
+    <div class="panel-header defect-list-header">
+      <div>
+        <h2>返修单列表</h2>
+        <p class="muted defect-count">共 {{ repairs_pagination.total }} 条，每页 25 条</p>
+      </div>
+      <form method="get" class="inline-form filter-bar">
+        <input name="sku_keyword" value="{{ sku_keyword or '' }}" placeholder="搜索 SKU 编码、名称、条码">
+        <input type="date" name="start_date" value="{{ start_date or '' }}">
+        <input type="date" name="end_date" value="{{ end_date or '' }}">
+        <button class="button ghost small" type="submit">筛选</button>
+        <a class="button ghost small" href="{{ url_for('defect_list') }}">清空</a>
+      </form>
+    </div>
+    <div class="table-wrap sticky-table-wrap defect-table-wrap">
+      <table class="defect-table">
+        <thead>
+          <tr>
+            <th>返修单号</th>
+            <th>SKU</th>
+            <th>商品</th>
+            <th>仓库</th>
+            <th>操作人</th>
+            <th>数量</th>
+            <th>处理进度</th>
+            <th>次品原因</th>
+            <th>状态</th>
+            <th>返修结果</th>
+            <th>创建时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for repair in repairs %}
+          <tr>
+            <td class="nowrap">{{ repair.repair_no }}</td>
+            <td>{{ repair.sku.sku_code }}</td>
+            <td>{{ repair.sku.name }}</td>
+            <td>{{ repair.warehouse.name if repair.warehouse else '-' }}</td>
+            <td>{{ repair.operator_name or '-' }}</td>
+            <td>{{ repair.quantity }}</td>
+            <td>{{ repair.quantity_summary }}</td>
+            <td>{{ repair.defect_reason }}</td>
+            <td><span class="status-badge status-{{ repair.status }}">{{ repair.status_label }}</span></td>
+            <td>{{ repair.repair_result or '-' }}</td>
+            <td class="nowrap">{{ format_dt(repair.created_at) }}</td>
+            <td class="defect-actions-cell">
+              <form method="post" action="{{ url_for('defect_update', repair_id=repair.id) }}" class="defect-update-form">
+                {{ csrf_field() }}
+                <select name="status" title="处理状态">
+                  <option value="pending" {% if repair.status == 'pending' %}selected{% endif %}>待处理</option>
+                  <option value="repairing" {% if repair.status == 'repairing' %}selected{% endif %}>返修中</option>
+                  <option value="done" {% if repair.status == 'done' %}selected{% endif %}>已完成</option>
+                  <option value="scrapped" {% if repair.status == 'scrapped' %}selected{% endif %}>已报废</option>
+                </select>
+                <label class="inline-field"><span>成功入库</span><input name="completed_quantity" type="number" min="0" value="{{ repair.completed_quantity or 0 }}" placeholder="成功"></label>
+                <label class="inline-field"><span>报废数量</span><input name="scrapped_quantity" type="number" min="0" value="{{ repair.scrapped_quantity or 0 }}" placeholder="报废"></label>
+                <input name="repair_result" value="{{ repair.repair_result or '' }}" placeholder="返修结果">
+                <button class="button ghost small" type="submit">更新</button>
+              </form>
+              <form method="post" action="{{ url_for('defect_delete', repair_id=repair.id) }}" class="defect-delete-form">
+                {{ csrf_field() }}
+                {% if repair.status in ['pending', 'repairing'] %}
+                <button class="button danger small" type="submit" onclick="return confirm('确认删除这张返修单吗？关联库存流水会一并回滚。');">删除</button>
+                {% else %}
+                <button class="button danger small" type="submit" disabled title="已完成或已报废返修单不允许删除">删除</button>
+                {% endif %}
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="12" class="muted-cell">暂无返修记录。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if repairs_pagination.pages > 1 %}
+    <nav class="pagination-bar" aria-label="返修单分页">
+      {% set page_args = {'sku_keyword': sku_keyword, 'start_date': start_date, 'end_date': end_date} %}
+      {% if repairs_pagination.has_prev %}
+      <a class="button ghost small" href="{{ url_for('defect_list', page=repairs_pagination.prev_num, **page_args) }}">上一页</a>
+      {% else %}
+      <span class="button ghost small disabled">上一页</span>
+      {% endif %}
+      <span class="pill">第 {{ repairs_pagination.page }} / {{ repairs_pagination.pages }} 页</span>
+      {% if repairs_pagination.has_next %}
+      <a class="button ghost small" href="{{ url_for('defect_list', page=repairs_pagination.next_num, **page_args) }}">下一页</a>
+      {% else %}
+      <span class="button ghost small disabled">下一页</span>
+      {% endif %}
+    </nav>
+    {% endif %}
+  </article>
+</section>
+{% endblock %}

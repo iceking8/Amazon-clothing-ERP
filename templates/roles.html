@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}角色管理 - 服装 ERP{% endblock %}
+{% block page_title %}角色管理{% endblock %}
+{% block content %}
+<section class="layout-two">
+  <article class="panel">
+    <div class="panel-header"><h2>新建角色</h2></div>
+    <form method="post" class="form-grid">
+      {{ csrf_field() }}
+      <label><span>角色名称</span><input name="name" required placeholder="例如：运营"></label>
+      <label><span>角色说明</span><input name="description" placeholder="简要说明该角色职责"></label>
+      <label class="full">
+        <span>分配权限</span>
+        <div class="checkbox-grid">
+          {% for permission in permissions %}
+          <label class="check-item"><input type="checkbox" name="permission_ids" value="{{ permission.id }}"> {{ permission.name }}</label>
+          {% endfor %}
+        </div>
+      </label>
+      <button class="button full" type="submit">保存角色</button>
+    </form>
+  </article>
+  <article class="panel">
+    <div class="panel-header"><h2>已有角色</h2></div>
+    <div class="stack-list">
+      {% for role in roles %}
+      <details class="stack-item user-card">
+        <summary class="user-card-summary">
+          <div class="user-card-main">
+            <strong>{{ role.name }}</strong>
+            <p>{{ role.description or "暂无说明" }}</p>
+            <small>{{ role.permissions|map(attribute='name')|join('、') or "无权限" }}</small>
+          </div>
+          <div class="user-card-meta">
+            <span class="button ghost small user-card-toggle">编辑</span>
+          </div>
+        </summary>
+        <div class="user-card-body">
+          <form method="post" action="{{ url_for('role_update', role_id=role.id) }}" class="form-grid compact-form">
+            {{ csrf_field() }}
+            <label><span>角色名称</span><input name="name" value="{{ role.name }}" required></label>
+            <label><span>角色说明</span><input name="description" value="{{ role.description }}"></label>
+            <label class="full">
+              <span>分配权限</span>
+              <div class="checkbox-grid compact-checkbox-grid">
+                {% for permission in permissions %}
+                <label class="check-item"><input type="checkbox" name="permission_ids" value="{{ permission.id }}" {% if permission in role.permissions %}checked{% endif %}> {{ permission.name }}</label>
+                {% endfor %}
+              </div>
+            </label>
+            <button class="button small" type="submit">更新角色</button>
+          </form>
+          <form method="post" action="{{ url_for('role_delete', role_id=role.id) }}" class="user-card-delete" onsubmit="return confirm('确认删除该角色？')">
+            {{ csrf_field() }}
+            <button class="button ghost small danger" type="submit">删除角色</button>
+          </form>
+        </div>
+      </details>
+      {% else %}
+      <p class="muted">暂无角色数据。</p>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+{% endblock %}

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}SKU 映射 - 服装 ERP{% endblock %}
+{% block page_title %}SKU 映射{% endblock %}
+{% block content %}
+<section class="layout-two wide-left">
+  <article class="panel">
+    <div class="panel-header">
+      <h2>映射列表</h2>
+      <form method="get" class="inline-form filter-bar">
+        <input name="mapping_keyword" value="{{ mapping_keyword or '' }}" placeholder="搜索店铺 SKU、仓库 SKU、商品名、运营">
+        <select name="mapping_user_id">
+          <option value="">全部运营</option>
+          {% for user in mapping_users %}
+          <option value="{{ user.id }}" {% if selected_mapping_user_id == user.id %}selected{% endif %}>{{ user.full_name }}</option>
+          {% endfor %}
+        </select>
+        <button class="button ghost small" type="submit">筛选</button>
+        <a class="button ghost small" href="{{ url_for('sku_mapping_list') }}">清空</a>
+      </form>
+    </div>
+    <div class="table-wrap sticky-table-wrap">
+      <table class="interactive-table mapping-table">
+        <thead>
+          <tr>
+            <th>运营</th>
+            <th>店铺 SKU</th>
+            <th>仓库 SKU</th>
+            <th>商品</th>
+            <th>备注</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for mapping in mappings %}
+          <tr>
+            <td>{{ mapping.user.full_name }}</td>
+            <td><strong>{{ mapping.external_sku_code }}</strong></td>
+            <td>{{ mapping.sku.sku_code }}</td>
+            <td>{{ mapping.sku.name }} / {{ mapping.sku.color or "-" }} / {{ mapping.sku.size or "-" }}</td>
+            <td>{{ mapping.remark or "-" }}</td>
+            <td>
+              <details class="stack-item user-card mapping-card" style="margin: 0;">
+                <summary class="user-card-summary" style="padding: 0; min-height: auto;">
+                  <div class="user-card-meta">
+                    <span class="button ghost small user-card-toggle">编辑</span>
+                  </div>
+                </summary>
+                <div class="user-card-body">
+                  <form method="post" action="{{ url_for('sku_mapping_update', mapping_id=mapping.id, mapping_keyword=mapping_keyword, mapping_user_id=selected_mapping_user_id) }}" class="form-grid compact-form">
+                    {{ csrf_field() }}
+                    <label>
+                      <span>运营</span>
+                      <select name="user_id" required>
+                        {% for user in mapping_users %}
+                        <option value="{{ user.id }}" {% if mapping.user_id == user.id %}selected{% endif %}>{{ user.full_name }}</option>
+                        {% endfor %}
+                      </select>
+                    </label>
+                    <label><span>店铺 SKU</span><input name="external_sku_code" value="{{ mapping.external_sku_code }}" required></label>
+                    <label class="full">
+                      <span>仓库 SKU</span>
+                      <div class="sku-picker" data-sku-picker>
+                        <input type="hidden" name="sku_id" value="{{ mapping.sku_id }}" data-sku-picker-value>
+                        <input type="search" list="mapping-sku-options" value="{{ mapping.sku.sku_code }} - {{ mapping.sku.name }} / {{ mapping.sku.color }} / {{ mapping.sku.size }}" autocomplete="off" data-sku-picker-input data-sku-picker-required>
+                      </div>
+                    </label>
+                    <label class="full"><span>备注</span><input name="remark" value="{{ mapping.remark }}"></label>
+                    <div class="inline-actions mapping-card-actions">
+                      <button class="button small" type="submit">保存修改</button>
+                    </div>
+                  </form>
+                  <form method="post" action="{{ url_for('sku_mapping_delete', mapping_id=mapping.id, mapping_keyword=mapping_keyword, mapping_user_id=selected_mapping_user_id) }}" class="mapping-card-delete" onsubmit="return confirm('确认删除这条 SKU 映射吗？')">
+                    {{ csrf_field() }}
+                    <button class="button ghost small danger" type="submit">删除</button>
+                  </form>
+                </div>
+              </details>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="muted-cell">暂无 SKU 映射数据。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+  <article class="panel sku-form-panel">
+    <div class="panel-header"><h2>批量导入</h2></div>
+    <form method="post" action="{{ url_for('sku_mapping_import', mapping_keyword=mapping_keyword, mapping_user_id=selected_mapping_user_id) }}" enctype="multipart/form-data" class="form-grid single">
+      {{ csrf_field() }}
+      <div class="inline-actions">
+        <a class="button ghost small" href="{{ url_for('sku_mapping_template') }}">下载模板</a>
+      </div>
+      <label class="full"><span>导入文件</span><input type="file" name="import_file" accept=".csv,.tsv,.xlsx,.xlsm" required></label>
+      <label class="inline-check"><input type="checkbox" name="overwrite_existing"> 已存在映射时自动覆盖</label>
+      <p class="hint">模板支持 CSV、TSV、Excel。按“运营账号、店铺SKU、仓库SKU、备注”填写即可批量导入。</p>
+      <button class="button full" type="submit">开始导入</button>
+    </form>
+
+    <div class="panel-header"><h2>新建映射</h2></div>
+    <form method="post" class="form-grid">
+      {{ csrf_field() }}
+      <label>
+        <span>运营</span>
+        <select name="user_id" required>
+          <option value="">请选择运营</option>
+          {% for user in mapping_users %}
+          <option value="{{ user.id }}" {% if default_mapping_user_id == user.id %}selected{% endif %}>{{ user.full_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label><span>店铺 SKU</span><input name="external_sku_code" required placeholder="例如：E1006T-Green-S"></label>
+      <label class="full">
+        <span>仓库 SKU</span>
+        <div class="sku-picker" data-sku-picker>
+          <input type="hidden" name="sku_id" data-sku-picker-value>
+          <input type="search" list="mapping-sku-options" placeholder="搜索仓库 SKU / 商品名 / 颜色 / 尺码" autocomplete="off" data-sku-picker-input data-sku-picker-required>
+        </div>
+      </label>
+      <label class="full"><span>备注</span><textarea name="remark" placeholder="可选，记录店铺、站点或特殊说明"></textarea></label>
+      <p class="hint">同一个仓库 SKU 可以被多个店铺 SKU 映射；限制是同一位运营的同一个店铺 SKU 只能保留一条映射。</p>
+      <button class="button full" type="submit">保存映射</button>
+    </form>
+    <datalist id="mapping-sku-options">
+      {% for sku in skus %}
+      <option value="{{ sku.sku_code }} - {{ sku.name }} / {{ sku.color }} / {{ sku.size }}" data-sku-id="{{ sku.id }}"></option>
+      {% endfor %}
+    </datalist>
+  </article>
+</section>
+{% endblock %}

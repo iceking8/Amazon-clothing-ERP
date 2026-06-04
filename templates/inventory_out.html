@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}出库管理 - 苏客科技ERP{% endblock %}
+{% block page_title %}出库管理{% endblock %}
+{% block content %}
+{% set form = outbound_form or {} %}
+{% set form_items = form.get('items', []) %}
+<section class="layout-two wide-left">
+  <article class="panel">
+    <div class="panel-header">
+      <h2>手工出库单列表</h2>
+      <form method="get" class="inline-form filter-bar">
+        <input name="sku_keyword" value="{{ sku_keyword or '' }}" placeholder="搜索单号、SKU 编码、名称、条码">
+        <input type="date" name="start_date" value="{{ start_date or '' }}">
+        <input type="date" name="end_date" value="{{ end_date or '' }}">
+        <button class="button ghost small" type="submit">筛选</button>
+        <a class="button ghost small" href="{{ url_for('inventory_out') }}">清空</a>
+      </form>
+    </div>
+    <div class="sticky-summary-bar">
+      <span class="pill">单据 {{ outbound_summary.order_count }}</span>
+      <span class="pill">明细 {{ outbound_summary.line_count }}</span>
+      <span class="pill">数量 {{ outbound_summary.quantity }}</span>
+      <span class="pill">仓库 {{ outbound_summary.warehouse_count }}</span>
+    </div>
+    <div class="stack-list">
+      {% for group in txn_groups %}
+      <details class="stack-item order-fold">
+        <summary class="order-fold-summary">
+          <div class="order-fold-main">
+            <strong>{{ group.reference_no }}</strong>
+            <span class="order-fold-sep">|</span>
+            <span>{{ group.warehouse.name }}</span>
+            <span class="order-fold-sep">|</span>
+            <span>共 {{ group.total_quantity }} 件</span>
+            <span class="order-fold-sep">|</span>
+            <span>{{ group.reference_type }}</span>
+            <span class="order-fold-sep">|</span>
+            <span>操作人：{{ group.lines[0].operator_name if group.lines else '-' }}</span>
+            <span class="order-fold-sep">|</span>
+            <small>{{ format_dt(group.created_at) }}</small>
+          </div>
+          <div class="inline-actions">
+            {% if group.note %}<span class="pill">{{ group.note }}</span>{% endif %}
+            <span class="button ghost small order-fold-toggle">展开明细</span>
+            <form method="post" action="{{ url_for('inventory_transaction_delete', txn_id=group.lines[0].id) }}" onsubmit="return confirm('确认删除这张手工出库单吗？库存余额会同步重算。')">
+              {{ csrf_field() }}
+              <button class="button ghost small danger" type="submit">删除出库单</button>
+            </form>
+          </div>
+        </summary>
+        <div class="table-wrap order-fold-body">
+          <table>
+            <thead><tr><th>SKU</th><th>商品</th><th>规格</th><th>数量</th><th>操作人</th></tr></thead>
+            <tbody>
+              {% for txn in group.lines %}
+              <tr>
+                <td>{{ txn.sku.sku_code }}</td>
+                <td>{{ txn.sku.name }}</td>
+                <td>{{ txn.sku.color or '-' }} / {{ txn.sku.size or '-' }}</td>
+                <td class="text-error">{{ txn.quantity }}</td>
+                <td>{{ txn.operator_name or '-' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+      {% else %}
+      <p class="muted">暂无手工出库单。</p>
+      {% endfor %}
+    </div>
+  </article>
+  <article class="panel">
+    <div class="panel-header"><h2>新建手工出库单</h2></div>
+    <form method="post" enctype="multipart/form-data" class="form-grid single">
+      {{ csrf_field() }}
+      <input type="hidden" name="form_action" value="import">
+      <label class="full"><span>导入 FBA 表格</span><input type="file" name="import_file" accept=".csv,.tsv,.xlsx,.xlsm" required></label>
+      <button class="button action-short-blue" type="submit">导入 CSV / Excel</button>
+      <p class="hint">导入时会自动读取 FBA 单号、卖家 SKU 和已发货数量，客户字段会自动忽略。</p>
+    </form>
+    <form method="post" class="form-grid" style="margin-top: 16px;">
+      {{ csrf_field() }}
+      <label><span>出库单号</span><input name="reference_no" value="{{ form.get('reference_no', '') }}" placeholder="留空自动生成"></label>
+      <label><span>单据类型</span><input name="reference_type" value="{{ form.get('reference_type', '') }}" placeholder="如：调拨单、报损单"></label>
+      <label><span>出库仓库</span>
+        <select name="warehouse_id" required>
+          <option value="">请选择仓库</option>
+          {% for warehouse in warehouses %}
+          <option value="{{ warehouse.id }}" {% if form.get('warehouse_id', '')|string == warehouse.id|string %}selected{% endif %}>{{ warehouse.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="full"><span>备注</span><textarea name="note" placeholder="可选，填写出库说明">{{ form.get('note', '') }}</textarea></label>
+      <datalist id="manual-outbound-sku-options">
+        {% for sku in skus %}
+        <option value="{{ sku.sku_code }} - {{ sku.name }} / {{ sku.color }} / {{ sku.size }}" data-sku-id="{{ sku.id }}"></option>
+        {% endfor %}
+      </datalist>
+      <div class="full dynamic-box" data-prefix="manual_outbound">
+        <div class="dynamic-header">
+          <span>出库明细</span>
+          <button class="button ghost small" type="button" data-add-row>添加一行</button>
+        </div>
+        <div class="dynamic-rows" data-rows>
+          {% for item in form_items %}
+          {% set selected_sku = (skus | selectattr('id', 'equalto', item.get('sku_id')|int) | list | first) %}
+          <div class="dynamic-row">
+            <div class="sku-picker" data-sku-picker>
+              <input type="hidden" name="manual_outbound_sku_id" value="{{ item.get('sku_id', '') }}" data-sku-picker-value>
+              <input type="search" list="manual-outbound-sku-options" value="{{ selected_sku.sku_code ~ ' - ' ~ selected_sku.name ~ ' / ' ~ selected_sku.color ~ ' / ' ~ selected_sku.size if selected_sku else '' }}" placeholder="搜索 SKU 编码 / 名称 / 颜色 / 尺码" autocomplete="off" data-sku-picker-input>
+            </div>
+            <input name="manual_outbound_quantity" type="number" min="1" value="{{ item.get('quantity', '') }}" placeholder="数量">
+            {% if can_view_prices() %}<input name="manual_outbound_price" type="number" step="0.01" min="0" value="{{ item.get('unit_price', '0') }}" placeholder="占位价格">{% endif %}
+            <button class="button ghost small danger" type="button" data-remove-row>删除</button>
+          </div>
+          {% endfor %}
+        </div>
+        <template data-row-template>
+          <div class="dynamic-row">
+            <div class="sku-picker" data-sku-picker>
+              <input type="hidden" name="manual_outbound_sku_id" data-sku-picker-value>
+              <input type="search" list="manual-outbound-sku-options" placeholder="搜索 SKU 编码 / 名称 / 颜色 / 尺码" autocomplete="off" data-sku-picker-input>
+            </div>
+            <input name="manual_outbound_quantity" type="number" min="1" placeholder="数量">
+            {% if can_view_prices() %}<input name="manual_outbound_price" type="number" step="0.01" min="0" value="0" placeholder="占位价格">{% endif %}
+            <button class="button ghost small danger" type="button" data-remove-row>删除</button>
+          </div>
+        </template>
+      </div>
+      <button class="button full action-short-blue" type="submit">保存手动出库单</button>
+    </form>
+  </article>
+</section>
+{% endblock %}

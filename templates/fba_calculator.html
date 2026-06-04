@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+{% block title %}FBA发货计算器 - 苏客 ERP{% endblock %}
+{% block page_title %}FBA发货计算器{% endblock %}
+{% block content %}
+{% set form = calc_form or {} %}
+{% set result = calc_result or {} %}
+{% set full_result = full_calc_result or {} %}
+{% set summary = result.get('summary', {}) %}
+{% set filters = result_filters or {} %}
+
+<section class="layout-two wide-left fba-compact-panels fba-calculator-top">
+  {% if current_user.has_permission('fba.calc.manage') %}
+  <article class="panel">
+    <div class="panel-header"><h2>导入与参数</h2></div>
+    <form method="post" enctype="multipart/form-data" class="form-grid fba-compact-form fba-calculator-form">
+      {{ csrf_field() }}
+      <label><span>亚马逊物流库存表</span><input type="file" name="inventory_file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" required></label>
+      <label><span>预留库存表</span><input type="file" name="reserved_file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" required></label>
+      <label><span>最近30天销量明细</span><input type="file" name="sales_30_file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" required></label>
+      <label>
+        <span>国家店铺</span>
+        <select name="marketplace">
+          <option value="ALL" {% if form.get('marketplace', 'ALL') == 'ALL' %}selected{% endif %}>全部</option>
+          <option value="US" {% if form.get('marketplace', 'ALL') == 'US' %}selected{% endif %}>US</option>
+          <option value="CA" {% if form.get('marketplace', 'ALL') == 'CA' %}selected{% endif %}>CA</option>
+        </select>
+      </label>
+      <input type="hidden" name="multiplier" value="{{ form.get('multiplier', '1') }}">
+      <input type="hidden" name="new_product_multiplier" value="{{ form.get('new_product_multiplier', '1.5') }}">
+      <input type="hidden" name="coverage_days" value="{{ form.get('coverage_days', '37') }}">
+      <label><span>生产周期（天）</span><input type="number" name="production_days" min="0" value="{{ form.get('production_days', '0') }}"></label>
+      <label><span>物流周期（天）</span><input type="number" name="sea_days" min="0" value="{{ form.get('sea_days', '30') }}"></label>
+      <label><span>入仓上架（天）</span><input type="number" name="inbound_processing_days" min="0" value="{{ form.get('inbound_processing_days', '0') }}"></label>
+      <label><span>安全库存（天）</span><input type="number" name="safety_stock_days" min="0" value="{{ form.get('safety_stock_days', '7') }}"></label>
+      <p class="hint full">只需上传一张包含日期的30天销量明细，系统会自动按最新销售日期汇总最近7天、14天和30天销量，并用14天/30天加权日均结合趋势系数计算。倍率、新品倍率、周期和安全库存可在下方“批量操作”随时调整并更新计算。系统会使用“FBA在途管理”中的活跃在途数量参与本次计算。当前活跃在途记录：{{ active_inbound_count }} 条。</p>
+      <button class="button full action-short-blue fba-calc-submit" type="submit">开始计算</button>
+    </form>
+  </article>
+  <article class="panel">
+    <div class="panel-header">
+      <h2>汇总</h2>
+      {% if full_result.get('rows') %}
+      <a class="button ghost small" href="{{ url_for('fba_calculator_export', sku_keyword=filters.get('sku_keyword', ''), suggested_state=filters.get('suggested_state', ''), suggested_min=filters.get('suggested_min', '')) }}">导出结果</a>
+      {% endif %}
+    </div>
+    <section class="stats-grid fba-tight-stats">
+      <article class="stat-card"><span>SKU数</span><strong>{{ summary.get('sku_count', 0) }}</strong></article>
+      <article class="stat-card"><span>建议发货量</span><strong>{{ summary.get('suggested_qty', 0) }}</strong></article>
+      <article class="stat-card"><span>可售库存</span><strong>{{ summary.get('sellable_qty', 0) }}</strong></article>
+      <article class="stat-card"><span>在途数量</span><strong>{{ summary.get('inbound_qty', 0) }}</strong></article>
+    </section>
+    <p class="hint">销量表会先按国家店铺过滤，再按店铺SKU和日期汇总；如果近7天销量下降但当前可售库存已经很低，系统会标记为疑似断货，而不是直接当作销量下滑。</p>
+  </article>
+  {% else %}
+  <article class="panel">
+    <div class="panel-header"><h2>发货与确认</h2></div>
+    <p class="hint">当前账号没有执行 FBA 计算的权限，这里只显示发货单记录和仓管确认区域。</p>
+    <section class="stats-grid fba-tight-stats">
+      <article class="stat-card"><span>发货单数</span><strong>{{ shipment_summary.pending_count + shipment_summary.confirmed_count }}</strong></article>
+      <article class="stat-card"><span>待确认</span><strong>{{ shipment_summary.pending_count }}</strong></article>
+      <article class="stat-card"><span>已确认</span><strong>{{ shipment_summary.confirmed_count }}</strong></article>
+      <article class="stat-card"><span>总数量</span><strong>{{ shipment_summary.quantity }}</strong></article>
+    </section>
+  </article>
+  {% endif %}
+</section>
+
+{% if current_user.has_permission('fba.calc.manage') %}
+<section class="panel">
+  <div class="panel-header">
+    <h2>计算结果</h2>
+    {% if full_result.get('rows') %}
+    <a class="button ghost small" href="{{ url_for('fba_calculator_export', sku_keyword=filters.get('sku_keyword', ''), suggested_state=filters.get('suggested_state', ''), suggested_min=filters.get('suggested_min', '')) }}">导出结果</a>
+    {% endif %}
+  </div>
+  {% if full_result.get('rows') %}
+  <form method="get" class="inline-form filter-bar fba-result-filter">
+    <input name="sku_keyword" value="{{ filters.get('sku_keyword', '') }}" placeholder="搜索店铺SKU / 仓库SKU / 商品">
+    <select name="suggested_state">
+      <option value="">全部建议量</option>
+      <option value="positive" {% if filters.get('suggested_state') == 'positive' %}selected{% endif %}>只看建议发货量大于 0</option>
+      <option value="zero" {% if filters.get('suggested_state') == 'zero' %}selected{% endif %}>只看建议发货量等于 0</option>
+    </select>
+    <input type="number" name="suggested_min" min="0" value="{{ filters.get('suggested_min', '') }}" placeholder="最小建议发货量">
+    <button class="button ghost small" type="submit">筛选</button>
+    <a class="button ghost small" href="{{ url_for('fba_calculator') }}">清空</a>
+  </form>
+  {% endif %}
+
+  {% if result.get('rows') %}
+  <form id="fba-batch-form" method="post" action="{{ url_for('fba_calculator_rule_batch_update') }}" class="fba-batch-bar">
+    {{ csrf_field() }}
+    <input type="hidden" name="sku_keyword" value="{{ filters.get('sku_keyword', '') }}">
+    <input type="hidden" name="suggested_state" value="{{ filters.get('suggested_state', '') }}">
+    <input type="hidden" name="suggested_min" value="{{ filters.get('suggested_min', '') }}">
+    <div class="fba-batch-head">
+      <div>
+        <strong>批量操作</strong>
+        <p class="hint">勾选结果后可批量切换新品状态，也可以按手填发货数量直接创建发货单。</p>
+      </div>
+      <span class="pill" data-batch-count>已选 0 个SKU</span>
+    </div>
+    <div class="fba-batch-fields">
+      <div class="fba-batch-inputs">
+        <label><span>倍率</span><input type="number" name="multiplier" step="0.1" min="0" value="{{ form.get('multiplier', '1') }}"></label>
+        <label><span>新品倍率</span><input type="number" name="new_product_multiplier" step="0.1" min="0" value="{{ form.get('new_product_multiplier', '1.5') }}"></label>
+        <input type="hidden" name="coverage_days" value="{{ form.get('coverage_days', '37') }}">
+        <label><span>生产周期</span><input type="number" name="production_days" min="0" value="{{ form.get('production_days', '0') }}"></label>
+        <label><span>物流周期</span><input type="number" name="sea_days" min="0" value="{{ form.get('sea_days', '30') }}"></label>
+        <label><span>入仓上架</span><input type="number" name="inbound_processing_days" min="0" value="{{ form.get('inbound_processing_days', '0') }}"></label>
+        <label><span>安全库存</span><input type="number" name="safety_stock_days" min="0" value="{{ form.get('safety_stock_days', '7') }}"></label>
+        <label><span>发货单店铺</span><input name="shipment_store_name" value="{{ form.get('shipment_store_name', '') }}" placeholder="例如：Amazon-US"></label>
+        <label><span>发货单备注</span><input name="shipment_remark" value="{{ form.get('shipment_remark', '') }}" placeholder="可选，带入发货单"></label>
+        <label><span>每箱数量</span><input value="0" readonly data-batch-per-box-output></label>
+        <label><span>箱数</span><input type="number" name="shipment_box_count" min="1" value="{{ form.get('shipment_box_count', '1') }}" data-batch-box-count></label>
+      </div>
+      <div class="fba-batch-actions">
+        <button class="button action-short-blue" type="submit" name="batch_action" value="mark_new">批量设为新品</button>
+        <button class="button action-short-blue" type="submit" name="batch_action" value="clear_new">批量取消新品</button>
+        <button class="button action-short-blue" type="submit" name="batch_action" value="refresh_calc">更新计算</button>
+        <button class="button action-short-blue" type="submit" formaction="{{ url_for('fba_calculator_generate_shipment') }}">创建发货单</button>
+      </div>
+    </div>
+  </form>
+  {% endif %}
+
+  <div class="table-wrap sticky-table-wrap">
+    <table class="interactive-table fba-result-table">
+      <thead>
+        <tr>
+          <th class="select-cell"><input type="checkbox" data-batch-toggle aria-label="全选当前结果"></th>
+          <th>店铺SKU</th>
+          <th>仓库SKU</th>
+          <th>商品</th>
+          <th>可售库存</th>
+          <th>已接收库存</th>
+          <th>预留库存</th>
+          <th>7天销量</th>
+          <th>14天销量</th>
+          <th>30天销量</th>
+          <th>7天日均</th>
+          <th>14天日均</th>
+          <th>30天日均</th>
+          <th>加权日均</th>
+          <th>目标天数</th>
+          <th>销量判断</th>
+          <th>趋势系数</th>
+          <th>应用倍率</th>
+          <th>在途数量</th>
+          <th>建议发货量</th>
+          <th>发货数量</th>
+          <th>每箱数量</th>
+          <th>仓库库存</th>
+          <th>规则</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in result.get('rows', []) %}
+        <tr>
+          <td class="select-cell">
+            <input type="checkbox" class="row-selector" name="external_sku_codes" value="{{ row.external_sku_code }}" form="fba-batch-form" data-batch-sku aria-label="选择 {{ row.external_sku_code }}">
+          </td>
+          <td>{{ row.external_sku_code }}</td>
+          <td>{{ row.warehouse_sku_code }}</td>
+          <td>{{ row.warehouse_sku_name }}</td>
+          <td>{{ row.sellable_qty }}</td>
+          <td>{{ row.received_qty }}</td>
+          <td>{{ row.reserved_qty }}</td>
+          <td>{{ row.sales_7_qty }}</td>
+          <td>{{ row.sales_14_qty }}</td>
+          <td>{{ row.sales_30_qty }}</td>
+          <td>{{ "%.2f"|format(row.daily_7) }}</td>
+          <td>{{ "%.2f"|format(row.daily_14) }}</td>
+          <td>{{ "%.2f"|format(row.daily_30) }}</td>
+          <td>{{ "%.2f"|format(row.weighted_daily or row.daily_30) }}</td>
+          <td>{{ row.target_days or form.get('coverage_days', '37') }}</td>
+          <td>
+            <span class="pill {% if row.stockout_suspected %}warn{% elif row.sales_health_status == '销量上升' %}info{% endif %}" title="{{ row.sales_health_note }}">{{ row.sales_health_status or '正常' }}</span>
+          </td>
+          <td>{{ "%.2f"|format(row.trend_factor) }}</td>
+          <td>
+            <strong>{{ "%.2f"|format(row.applied_multiplier) }}</strong>
+            {% if row.is_new_product %}
+            <div><span class="pill info">新品</span></div>
+            {% endif %}
+          </td>
+          <td>{{ row.inbound_qty }}</td>
+          <td><strong>{{ row.suggested_qty }}</strong></td>
+          <td>
+            <input
+              class="fba-shipment-qty-input"
+              type="number"
+              min="0"
+              name="shipment_quantity__{{ row.external_sku_code }}"
+              value="{{ row.suggested_qty }}"
+              form="fba-batch-form"
+              data-shipment-quantity
+              data-shipment-sku="{{ row.external_sku_code }}"
+              data-suggested-qty="{{ row.suggested_qty }}"
+              data-warehouse-qty="{{ row.warehouse_qty }}"
+            >
+          </td>
+          <td data-per-box-row>0</td>
+          <td>{{ row.warehouse_qty }}</td>
+          <td>
+            <details class="stack-item user-card" style="margin: 0;">
+              <summary class="user-card-summary" style="padding: 0; min-height: auto;">
+                <div class="user-card-meta">
+                  <span class="button ghost small user-card-toggle">规则</span>
+                </div>
+              </summary>
+              <div class="user-card-body">
+                <form method="post" action="{{ url_for('fba_calculator_rule_update') }}" class="form-grid compact-form">
+                  {{ csrf_field() }}
+                  <input type="hidden" name="external_sku_code" value="{{ row.external_sku_code }}">
+                  <input type="hidden" name="sku_keyword" value="{{ filters.get('sku_keyword', '') }}">
+                  <input type="hidden" name="suggested_state" value="{{ filters.get('suggested_state', '') }}">
+                  <input type="hidden" name="suggested_min" value="{{ filters.get('suggested_min', '') }}">
+                  <label><span>单独倍率</span><input type="number" name="custom_multiplier" step="0.1" min="0" value="{{ row.custom_multiplier }}"></label>
+                  <label class="inline-check"><input type="checkbox" name="is_new_product" {% if row.is_new_product %}checked{% endif %}> 新品</label>
+                  <label class="full"><span>备注</span><input name="remark" value="{{ row.rule_remark }}"></label>
+                  <button class="button small" type="submit">保存</button>
+                </form>
+              </div>
+            </details>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="24" class="muted-cell">
+            {% if full_result.get('rows') %}
+            当前筛选条件下没有匹配的 SKU。
+            {% else %}
+            上传 4 类表格并点击“开始计算”后，这里会显示建议发货量。
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if can_manage_shipment_sheets() or can_confirm_shipment_sheets() %}
+<section class="panel shipment-embedded-panel">
+  <div class="panel-header">
+    <h2>发货单记录</h2>
+    <form method="get" class="inline-form filter-bar shipment-inline-filter">
+      <input type="hidden" name="sku_keyword" value="{{ filters.get('sku_keyword', '') }}">
+      <input type="hidden" name="suggested_state" value="{{ filters.get('suggested_state', '') }}">
+      <input type="hidden" name="suggested_min" value="{{ filters.get('suggested_min', '') }}">
+      <input name="shipment_q" value="{{ shipment_q or '' }}" placeholder="搜索单号、店铺、运营、SKU">
+      <select name="shipment_archive">
+        <option value="active" {% if selected_shipment_archive == 'active' %}selected{% endif %}>未归档</option>
+        <option value="archived" {% if selected_shipment_archive == 'archived' %}selected{% endif %}>已归档</option>
+        <option value="all" {% if selected_shipment_archive == 'all' %}selected{% endif %}>全部</option>
+      </select>
+      <select name="shipment_store_name">
+        <option value="">全部店铺</option>
+        {% for item in shipment_stores %}
+        <option value="{{ item }}" {% if selected_shipment_store == item %}selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+      <select name="shipment_status">
+        <option value="">全部状态</option>
+        <option value="pending" {% if selected_shipment_status == 'pending' %}selected{% endif %}>待备货</option>
+        <option value="confirmed" {% if selected_shipment_status == 'confirmed' %}selected{% endif %}>已确认</option>
+      </select>
+      <button class="button ghost small" type="submit">筛选</button>
+      <a class="button ghost small" href="{{ url_for('fba_calculator', sku_keyword=filters.get('sku_keyword', ''), suggested_state=filters.get('suggested_state', ''), suggested_min=filters.get('suggested_min', '')) }}">清空</a>
+      <a class="button ghost small" href="{{ url_for('shipment_sheet_export', q=shipment_q or '', store_name=selected_shipment_store or '', status=selected_shipment_status or '', archive=selected_shipment_archive or 'active') }}">导出</a>
+    </form>
+  </div>
+  <div class="sticky-summary-bar">
+    <span class="pill">单据 {{ shipment_summary.count }}</span>
+    <span class="pill">待备货 {{ shipment_summary.pending_count }}</span>
+    <span class="pill">已确认 {{ shipment_summary.confirmed_count }}</span>
+    <span class="pill">数量 {{ shipment_summary.quantity }}</span>
+  </div>
+  {% if can_manage_shipment_sheets() and shipments %}
+  <form method="post" action="{{ url_for('shipment_sheet_archive_export') }}" id="shipment-archive-export-form" class="inline-form filter-bar shipment-archive-bar" onsubmit="return confirm('确认归档并导出选中的发货单吗？归档不会回滚库存，只会从默认列表隐藏。')">
+    {{ csrf_field() }}
+    <button class="button ghost small" type="submit">归档并导出选中</button>
+    <span class="hint">归档只隐藏历史单据，不影响库存；已归档可通过筛选查看。</span>
+  </form>
+  {% endif %}
+  <datalist id="shipment-mapping-options">
+    {% for mapping in shipment_mapping_options %}
+    <option value="{{ mapping.external_sku_code }}">{{ mapping.sku.sku_code }} / {{ mapping.sku.name }}</option>
+    {% endfor %}
+  </datalist>
+  <div class="stack-list">
+    {% for shipment in shipments %}
+    <details class="stack-item order-fold shipment-fold">
+      <summary class="order-fold-summary">
+        <div class="order-fold-main">
+          <strong>{{ shipment.shipment_no }}</strong>
+          <span class="order-fold-sep">|</span>
+          <span>{{ shipment.store_name }}</span>
+          <span class="order-fold-sep">|</span>
+          <span>{{ shipment.operator_name }}</span>
+          <span class="order-fold-sep">|</span>
+          <span>创建人：{{ shipment.operator.full_name if shipment.operator else shipment.operator_name or '-' }}</span>
+          <span class="order-fold-sep">|</span>
+          <span>{{ shipment.box_count }} 箱</span>
+          <span class="order-fold-sep">|</span>
+          <span>{{ shipment.total_quantity }} 件</span>
+          <span class="order-fold-sep">|</span>
+          <small>{{ format_dt(shipment.created_at) }}</small>
+        </div>
+        <div class="inline-actions">
+          {% if can_manage_shipment_sheets() %}
+          <input type="checkbox" name="shipment_ids" value="{{ shipment.id }}" form="shipment-archive-export-form" aria-label="选择 {{ shipment.shipment_no }}">
+          {% endif %}
+          <span class="pill {% if shipment.status == 'pending' %}warn{% endif %}">{{ shipment.status_label }}</span>
+          {% if shipment.archived_at %}<span class="pill">已归档</span>{% endif %}
+          <span class="button ghost small order-fold-toggle">展开</span>
+        </div>
+      </summary>
+      <div class="order-fold-body">
+        <div class="table-wrap">
+          <table class="fba-compact-table">
+            <thead>
+              <tr>
+                <th>店铺SKU</th>
+                <th>仓库SKU</th>
+                <th>商品</th>
+                <th>数量</th>
+                <th>每箱</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in shipment.items %}
+              <tr>
+                <td>{{ item.external_sku_code }}</td>
+                <td>{{ item.sku.sku_code }}</td>
+                <td>{{ item.sku.name }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>{{ item.per_box_quantity }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if shipment.status == 'pending' and can_edit_shipment_sheet(shipment) %}
+        <form method="post" action="{{ url_for('shipment_sheet_update', shipment_id=shipment.id, shipment_q=shipment_q or '', shipment_status=selected_shipment_status or '', shipment_store_name=selected_shipment_store or '') }}" class="form-grid compact-form" style="margin-top: 10px;">
+          {{ csrf_field() }}
+          <label><span>店铺</span><input name="store_name" value="{{ shipment.store_name }}" required></label>
+          <label><span>箱数</span><input type="number" name="box_count" min="1" value="{{ shipment.box_count }}" required></label>
+          <label class="full"><span>备注</span><input name="remark" value="{{ shipment.remark }}"></label>
+          {% for item in shipment.items %}
+          <div class="dynamic-row shipment-row">
+            <input name="shipment_external_sku_code" list="shipment-mapping-options" value="{{ item.external_sku_code }}" placeholder="搜索店铺SKU">
+            <input name="shipment_quantity" type="number" min="1" value="{{ item.quantity }}" placeholder="数量">
+            <input type="number" value="{{ item.per_box_quantity }}" readonly placeholder="每箱数量">
+            <span class="pill">仓库SKU {{ item.sku.sku_code }}</span>
+          </div>
+          {% endfor %}
+          <div class="inline-actions">
+            <button class="button small" type="submit">保存修改</button>
+          </div>
+        </form>
+        {% endif %}
+        <div class="inline-actions" style="margin-top: 10px;">
+          {% if shipment.status == 'pending' and can_confirm_shipment_sheets() %}
+          <form method="post" action="{{ url_for('shipment_sheet_confirm', shipment_id=shipment.id, shipment_q=shipment_q or '', shipment_status=selected_shipment_status or '', shipment_store_name=selected_shipment_store or '') }}">
+            {{ csrf_field() }}
+            <button class="button small" type="submit">仓管确认备货</button>
+          </form>
+          {% endif %}
+          {% if can_delete_shipment_sheet(shipment) %}
+          <form method="post" action="{{ url_for('shipment_sheet_delete', shipment_id=shipment.id, shipment_q=shipment_q or '', shipment_status=selected_shipment_status or '', shipment_store_name=selected_shipment_store or '') }}" onsubmit="return confirm('确认删除这张发货单吗？如果已确认，会同步回滚扣减库存。')">
+            {{ csrf_field() }}
+            <button class="button ghost small danger" type="submit">删除</button>
+          </form>
+          {% endif %}
+          {% if shipment.warehouse_confirmer_name %}
+          <span class="pill">仓管：{{ shipment.warehouse_confirmer_name }}</span>
+          {% endif %}
+        </div>
+      </div>
+    </details>
+    {% else %}
+    <p class="muted">暂无发货单数据。</p>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

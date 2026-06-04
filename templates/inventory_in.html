@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}入库管理 - 苏客科技ERP{% endblock %}
+{% block page_title %}入库管理{% endblock %}
+{% block content %}
+<section class="layout-two wide-left">
+  <article class="panel">
+    <div class="panel-header">
+      <h2>最近入库记录</h2>
+      <form method="get" class="inline-form filter-bar">
+        <input name="sku_keyword" value="{{ sku_keyword or '' }}" placeholder="搜索 SKU 编码、名称、条码">
+        <input type="date" name="start_date" value="{{ start_date or '' }}">
+        <input type="date" name="end_date" value="{{ end_date or '' }}">
+        <button class="button ghost small" type="submit">筛选</button>
+        <a class="button ghost small" href="{{ url_for('inventory_in') }}">清空</a>
+      </form>
+    </div>
+    <div class="table-wrap sticky-table-wrap">
+      <table class="interactive-table">
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>仓库</th>
+            <th>供应商</th>
+            <th>商品</th>
+            <th>数量</th>
+            <th>类型</th>
+            <th>操作人</th>
+            <th>操作</th>
+          </tr>
+          <tr class="table-summary-row">
+            <th>汇总 {{ inbound_summary.record_count }}</th>
+            <th>{{ inbound_summary.warehouse_count }} 仓</th>
+            <th>-</th>
+            <th>{{ inbound_summary.sku_count }} SKU</th>
+            <th>{{ inbound_summary.quantity }}</th>
+            <th>-</th>
+            <th>-</th>
+            <th>-</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for txn in txns %}
+          <tr>
+            <td>{{ format_dt(txn.created_at) }}</td>
+            <td>{{ txn.warehouse.name }}</td>
+            <td>{{ txn.supplier.name if txn.supplier else '-' }}</td>
+            <td>{{ txn.sku.sku_code }} / {{ txn.sku.name }}</td>
+            <td class="text-success">+{{ txn.quantity }}</td>
+            <td>{{ txn.transaction_type_label }}</td>
+            <td>{{ txn.operator_name or '-' }}</td>
+            <td>
+              <form method="post" action="{{ url_for('inventory_transaction_delete', txn_id=txn.id) }}" onsubmit="return confirm('确认删除这条入库记录吗？库存余额会同步重算。')">
+                {{ csrf_field() }}
+                <button class="button ghost small danger" type="submit">删除</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="muted-cell">暂无入库记录。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+  <article class="panel">
+    <div class="panel-header"><h2>新建手工入库单</h2></div>
+    <form method="post" class="form-grid">
+      {{ csrf_field() }}
+      <label><span>入库单号</span><input name="reference_no" placeholder="留空自动生成"></label>
+      <label><span>单据类型</span><input name="reference_type" placeholder="如：退货单、盘盈单"></label>
+      <label><span>入库仓库</span>
+        <select name="warehouse_id" required>
+          <option value="">请选择仓库</option>
+          {% for warehouse in warehouses %}
+          <option value="{{ warehouse.id }}">{{ warehouse.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label><span>供应商</span>
+        <select name="supplier_id" required>
+          <option value="">请选择供应商</option>
+          {% for supplier in suppliers %}
+          <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="full"><span>备注</span><textarea name="note" placeholder="可选，填写入库说明"></textarea></label>
+      <datalist id="manual-inbound-sku-options">
+        {% for sku in skus %}
+        <option value="{{ sku.sku_code }} - {{ sku.name }} / {{ sku.color }} / {{ sku.size }}" data-sku-id="{{ sku.id }}"></option>
+        {% endfor %}
+      </datalist>
+      <div class="full dynamic-box" data-prefix="manual_inbound">
+        <div class="dynamic-header">
+          <span>入库明细</span>
+          <button class="button ghost small" type="button" data-add-row>添加一行</button>
+        </div>
+        <div class="dynamic-rows" data-rows></div>
+        <template data-row-template>
+          <div class="dynamic-row">
+            <div class="sku-picker" data-sku-picker>
+              <input type="hidden" name="manual_inbound_sku_id" data-sku-picker-value>
+              <input type="search" list="manual-inbound-sku-options" placeholder="搜索 SKU 编码 / 名称 / 颜色 / 尺码" autocomplete="off" data-sku-picker-input>
+            </div>
+            <input name="manual_inbound_quantity" type="number" min="1" placeholder="数量">
+            {% if can_view_prices() %}<input name="manual_inbound_price" type="number" step="0.01" min="0" value="0" placeholder="占位价格">{% endif %}
+            <button class="button ghost small danger" type="button" data-remove-row>删除</button>
+          </div>
+        </template>
+      </div>
+      <button class="button action-short-blue" type="submit">保存手工入库单</button>
+    </form>
+  </article>
+</section>
+{% endblock %}

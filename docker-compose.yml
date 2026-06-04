@@ -1,0 +1,14 @@
+services:
+  garment-erp:
+    build: .
+    container_name: garment-erp
+    ports:
+      - "8000:8000"
+    environment:
+      ERP_SECRET_KEY: "replace-this-in-production"
+      ERP_DATABASE_URL: "sqlite:////app/instance/erp.db"
+      ERP_HOST: "0.0.0.0"
+      ERP_PORT: "8000"
+    volumes:
+      - /volume2/docker/clothes_erp/instance:/app/instance
+    restart: unless-stopped

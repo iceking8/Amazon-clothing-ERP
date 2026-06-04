@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}销售订单 - 苏客科技ERP{% endblock %}
+{% block page_title %}销售订单{% endblock %}
+{% block content %}
+{% set form = sales_form or {} %}
+{% set form_items = form.get('items', []) %}
+<section class="layout-two wide-left">
+  <article class="panel">
+    <div class="panel-header">
+      <h2>订单列表</h2>
+      <form method="get" class="inline-form filter-bar">
+        <input name="sku_keyword" value="{{ sku_keyword or '' }}" placeholder="搜索订单号、SKU 编码、名称、条码">
+        <input type="date" name="start_date" value="{{ start_date or '' }}">
+        <input type="date" name="end_date" value="{{ end_date or '' }}">
+        <button class="button ghost small" type="submit">筛选</button>
+        <a class="button ghost small" href="{{ url_for('sales_order_list') }}">清空</a>
+      </form>
+    </div>
+    <div class="sticky-summary-bar">
+      <span class="pill">订单 {{ sales_summary.order_count }}</span>
+      <span class="pill">明细 {{ sales_summary.sku_count }}</span>
+      <span class="pill">数量 {{ sales_summary.quantity }}</span>
+      <span class="pill">已发货 {{ sales_summary.shipped_count }}</span>
+      {% if can_view_prices() %}<span class="pill">金额 {{ "%.2f"|format(sales_summary.amount) }}</span>{% endif %}
+    </div>
+    <div class="stack-list">
+      {% for order in orders %}
+      <details class="stack-item order-fold">
+        <summary class="order-fold-summary">
+          <div class="order-fold-main">
+            <strong>{{ order.order_no }}</strong>
+            <span class="order-fold-sep">|</span>
+            <span>{{ order.customer_name }}</span>
+            <span class="order-fold-sep">|</span>
+            <span>{{ order.warehouse.name }}</span>
+            <span class="order-fold-sep">|</span>
+            <span class="status-badge status-{{ order.status }}">{{ order.status_label }}</span>
+            <span class="order-fold-sep">|</span>
+            <span>操作人：{{ order.operator_name or '-' }}</span>
+            {% if order.phone %}
+            <span class="order-fold-sep">|</span>
+            <span>{{ order.phone }}</span>
+            {% endif %}
+            <span class="order-fold-sep">|</span>
+            <small>{{ format_dt(order.created_at) }}</small>
+          </div>
+          <div class="inline-actions">
+            {% if can_view_prices() %}<span class="pill">{{ "%.2f"|format(order.total_amount) }}</span>{% endif %}
+            <span class="button ghost small order-fold-toggle">展开明细</span>
+            {% if order.status != "shipped" and can_ship_sales_orders() %}
+            <form method="post" action="{{ url_for('sales_order_ship', order_id=order.id) }}" onsubmit="return confirm('确认发货后将自动扣减库存，是否继续？')">
+              {{ csrf_field() }}
+              <button class="button small" type="submit">确认发货</button>
+            </form>
+            {% endif %}
+            <form method="post" action="{{ url_for('sales_order_delete', order_id=order.id) }}" onsubmit="return confirm('确认删除这张销售订单吗？如果已发货，会同步回滚出库记录和库存。')">
+              {{ csrf_field() }}
+              <button class="button ghost small danger" type="submit">删除订单</button>
+            </form>
+          </div>
+        </summary>
+        <div class="table-wrap order-fold-body">
+          <table>
+            <thead><tr><th>SKU</th><th>商品</th><th>规格</th><th>数量</th>{% if can_view_prices() %}<th>单价</th>{% endif %}<th>当前库存</th></tr></thead>
+            <tbody>
+              {% for item in order.items %}
+              <tr>
+                <td>{{ item.sku.sku_code }}</td>
+                <td>{{ item.sku.name }}</td>
+                <td>{{ item.sku.color or '-' }} / {{ item.sku.size or '-' }}</td>
+                <td>{{ item.quantity }}</td>
+                {% if can_view_prices() %}<td>{{ "%.2f"|format(item.unit_price) }}</td>{% endif %}
+                <td>{{ inventory_by_warehouse.get((order.warehouse_id, item.sku_id), 0) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+      {% else %}
+      <p class="muted">暂无销售订单。</p>
+      {% endfor %}
+    </div>
+  </article>
+  <article class="panel">
+    <div class="panel-header"><h2>新建销售订单</h2></div>
+    <form method="post" enctype="multipart/form-data" class="form-grid single">
+      {{ csrf_field() }}
+      <input type="hidden" name="form_action" value="import">
+      <label class="full"><span>导入 FBA 表格</span><input type="file" name="import_file" accept=".csv,.tsv,.xlsx,.xlsm" required></label>
+      <button class="button action-short-blue" type="submit">导入 CSV / Excel</button>
+      <p class="hint">导入时会自动读取 FBA 单号、店铺 SKU 和发货数量；客户不存在时会在保存时自动建立。</p>
+    </form>
+    <form method="post" class="form-grid" style="margin-top: 16px;">
+      {{ csrf_field() }}
+      <label><span>订单号</span><input name="order_no" value="{{ form.get('order_no', '') }}" placeholder="留空自动生成"></label>
+      <label><span>客户档案</span>
+        <select name="customer_id">
+          <option value="">手动填写客户</option>
+          {% for customer in customers %}
+          <option value="{{ customer.id }}" {% if form.get('customer_id', '')|string == customer.id|string %}selected{% endif %}>{{ customer.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label><span>客户名称</span><input name="customer_name" value="{{ form.get('customer_name', '') }}" placeholder="未选择客户档案时必填"></label>
+      <label><span>联系电话</span><input name="phone" value="{{ form.get('phone', '') }}" placeholder="客户联系电话"></label>
+      <label><span>出库仓库</span>
+        <select name="warehouse_id" required>
+          <option value="">请选择仓库</option>
+          {% for warehouse in warehouses %}
+          <option value="{{ warehouse.id }}" {% if form.get('warehouse_id', '')|string == warehouse.id|string %}selected{% endif %}>{{ warehouse.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label><span>订单状态</span>
+        <select name="status">
+          <option value="confirmed" {% if form.get('status', 'confirmed') == 'confirmed' %}selected{% endif %}>已确认</option>
+          <option value="draft" {% if form.get('status') == 'draft' %}selected{% endif %}>草稿</option>
+        </select>
+      </label>
+      <label class="full"><span>收货地址</span><input name="shipping_address" value="{{ form.get('shipping_address', '') }}" placeholder="收货地址"></label>
+      <label class="full"><span>备注</span><textarea name="remark" placeholder="可选备注">{{ form.get('remark', '') }}</textarea></label>
+      <datalist id="sales-sku-options">
+        {% for sku in skus %}
+        <option value="{{ sku.sku_code }} - {{ sku.name }} / {{ sku.color }} / {{ sku.size }}" data-sku-id="{{ sku.id }}"></option>
+        {% endfor %}
+      </datalist>
+      <div class="full dynamic-box" data-prefix="sales">
+        <div class="dynamic-header">
+          <span>销售明细</span>
+          <button class="button ghost small" type="button" data-add-row>添加一行</button>
+        </div>
+        <div class="dynamic-rows" data-rows>
+          {% for item in form_items %}
+          {% set selected_sku = (skus | selectattr('id', 'equalto', item.get('sku_id')|int) | list | first) %}
+          <div class="dynamic-row">
+            <div class="sku-picker" data-sku-picker>
+              <input type="hidden" name="sales_sku_id" value="{{ item.get('sku_id', '') }}" data-sku-picker-value>
+              <input type="search" list="sales-sku-options" value="{{ selected_sku.sku_code ~ ' - ' ~ selected_sku.name ~ ' / ' ~ selected_sku.color ~ ' / ' ~ selected_sku.size if selected_sku else '' }}" placeholder="搜索 SKU 编码 / 名称 / 颜色 / 尺码" autocomplete="off" data-sku-picker-input>
+            </div>
+            <input name="sales_quantity" type="number" min="1" value="{{ item.get('quantity', '') }}" placeholder="数量">
+            {% if can_view_prices() %}<input name="sales_price" type="number" step="0.01" min="0" value="{{ item.get('unit_price', '0') }}" placeholder="单价">{% endif %}
+            <button class="button ghost small danger" type="button" data-remove-row>删除</button>
+          </div>
+          {% endfor %}
+        </div>
+        <template data-row-template>
+          <div class="dynamic-row">
+            <div class="sku-picker" data-sku-picker>
+              <input type="hidden" name="sales_sku_id" data-sku-picker-value>
+              <input type="search" list="sales-sku-options" placeholder="搜索 SKU 编码 / 名称 / 颜色 / 尺码" autocomplete="off" data-sku-picker-input>
+            </div>
+            <input name="sales_quantity" type="number" min="1" placeholder="数量">
+            {% if can_view_prices() %}<input name="sales_price" type="number" step="0.01" min="0" value="0" placeholder="单价">{% endif %}
+            <button class="button ghost small danger" type="button" data-remove-row>删除</button>
+          </div>
+        </template>
+      </div>
+      <button class="button full action-short-blue" type="submit">保存销售订单</button>
+    </form>
+  </article>
+</section>
+{% endblock %}

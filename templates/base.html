@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}苏客科技ERP{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  </head>
+  <body class="{% if not can_delete_records() %}delete-disabled{% endif %}">
+    <div class="shell">
+      {% if current_user %}
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark"><span>苏客</span><span>科技</span></div>
+          <div>
+            <strong>苏客科技ERP</strong>
+            <p>采购、库存、销售、返修一体化管理。</p>
+          </div>
+        </div>
+        <nav class="nav-list">
+          {% for endpoint, label, permission in nav_items %}
+            {% if current_user.has_permission(permission)
+              or (endpoint == 'fba_calculator' and (current_user.has_permission('shipment.manage') or current_user.has_permission('shipment.confirm')))
+              or (endpoint == 'purchase_calculator' and can_access_purchase_calculator()) %}
+            <a class="nav-link {% if endpoint == 'asset_list' %}nav-link-emphasis {% endif %}{% if request.endpoint == endpoint %}active{% endif %}" href="{{ url_for(endpoint) }}">{{ label }}</a>
+            {% endif %}
+          {% endfor %}
+          {% if current_user.has_permission('user.manage') %}
+          <a class="nav-link {% if request.endpoint == 'role_list' %}active{% endif %}" href="{{ url_for('role_list') }}">角色管理</a>
+          <a class="nav-link {% if request.endpoint == 'permission_list' %}active{% endif %}" href="{{ url_for('permission_list') }}">权限列表</a>
+          <a class="nav-link {% if request.endpoint == 'login_audit_list' %}active{% endif %}" href="{{ url_for('login_audit_list') }}">登录日志</a>
+          {% if is_admin_user() %}
+          <a class="nav-link {% if request.endpoint == 'operation_log_list' %}active{% endif %}" href="{{ url_for('operation_log_list') }}">分类日志</a>
+          {% endif %}
+          <a class="nav-link {% if request.endpoint == 'system_info' %}active{% endif %}" href="{{ url_for('system_info') }}">系统信息 / 版本信息</a>
+          {% endif %}
+        </nav>
+      </aside>
+      {% endif %}
+      <main class="main">
+        {% if current_user %}
+        <header class="topbar">
+          <div>
+            <h1>{% block page_title %}苏客科技ERP{% endblock %}</h1>
+            <p class="muted">欢迎，{{ current_user.full_name }}</p>
+          </div>
+          <div class="topbar-actions">
+            {% if pending_shipment_count %}
+            <a class="button ghost small" href="{{ url_for('fba_calculator', shipment_status='pending') }}">待确认发货单 {{ pending_shipment_count }}</a>
+            {% endif %}
+            <span class="pill">{{ format_dt(now) }}</span>
+            <form method="post" action="{{ url_for('logout') }}">
+              {{ csrf_field() }}
+              <button class="button ghost" type="submit">退出登录</button>
+            </form>
+          </div>
+        </header>
+        {% endif %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <section class="flash-list">
+              {% for category, message in messages %}
+              <div class="flash {{ category }}">{{ message }}</div>
+              {% endfor %}
+            </section>
+          {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

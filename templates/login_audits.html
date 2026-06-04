@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}登录日志 - 服装 ERP{% endblock %}
+{% block page_title %}登录日志{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-header"><h2>登录成功、失败与锁定记录</h2></div>
+  <div class="table-wrap sticky-table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>用户名</th>
+          <th>姓名</th>
+          <th>结果</th>
+          <th>原因</th>
+          <th>登录时间</th>
+          <th>退出时间</th>
+          <th>锁定至</th>
+          <th>IP</th>
+          <th>浏览器信息</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for audit in login_audits %}
+        <tr>
+          <td>{{ audit.username }}</td>
+          <td>{{ audit.user.full_name if audit.user else "-" }}</td>
+          <td>{{ "成功" if audit.is_success else "失败" }}</td>
+          <td>
+            {% if audit.is_success %}
+              {{ audit.logout_reason or "登录成功" }}
+            {% else %}
+              {{ audit.failure_reason or "登录失败" }}
+              {% if audit.lock_triggered %} / 已触发锁定{% endif %}
+            {% endif %}
+          </td>
+          <td>{{ format_dt(audit.login_at) }}</td>
+          <td>{{ format_dt(audit.logout_at) if audit.logout_at else "-" }}</td>
+          <td>{{ format_dt(audit.locked_until) if audit.locked_until else "-" }}</td>
+          <td>{{ audit.login_ip or "-" }}</td>
+          <td>{{ audit.user_agent or "-" }}</td>
+          <td>
+            {% if audit.user %}
+            <form method="post" action="{{ url_for('user_unlock', user_id=audit.user.id) }}">
+              {{ csrf_field() }}
+              <button class="button ghost small" type="submit">解锁账号</button>
+            </form>
+            {% else %}
+            <span class="muted">-</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="10" class="muted-cell">暂无登录日志。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

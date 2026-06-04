@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}权限列表 - 服装 ERP{% endblock %}
+{% block page_title %}权限列表{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-header"><h2>系统权限</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>权限编码</th><th>权限名称</th><th>说明</th></tr></thead>
+      <tbody>
+        {% for permission in permissions %}
+        <tr><td><code>{{ permission.code }}</code></td><td>{{ permission.name }}</td><td>{{ permission.description }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

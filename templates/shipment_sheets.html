@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}发货表 - 服装 ERP{% endblock %}
+{% block page_title %}发货表{% endblock %}
+{% block content %}
+{% set form = shipment_form or {} %}
+{% set form_items = form.get('items', [{}]) %}
+{% set default_shipment_rows = 8 %}
+<section class="layout-two wide-left">
+  <article class="panel">
+    <div class="panel-header">
+      <h2>新建发货表</h2>
+      {% if can_confirm_shipment_sheets() and shipment_summary.pending_count %}
+      <span class="pill warn">待仓管确认 {{ shipment_summary.pending_count }}</span>
+      {% endif %}
+    </div>
+    <form method="post" class="form-grid" data-shipment-form data-shipment-prelock-url="{{ url_for('shipment_sheet_prelock') }}" data-shipment-release-url="{{ url_for('shipment_sheet_prelock_release') }}" data-csrf-token="{{ get_csrf_token() }}">
+      {{ csrf_field() }}
+      <div class="full shipment-meta-grid">
+        <label><span>店铺</span><input name="store_name" value="{{ form.get('store_name', '') }}" required placeholder="例如：Amazon-US / TEMU-A"></label>
+        <label><span>箱数</span><input type="number" name="box_count" min="1" value="{{ form.get('box_count', 1) }}" required data-shipment-box-count></label>
+        <label><span>单箱数量</span><input value="0" readonly data-shipment-per-box-total></label>
+        <label><span>运营</span><input value="{{ form.get('operator_name', '') }}" readonly></label>
+        <label><span>仓库</span><input value="{{ form.get('warehouse_name', '-') }}" readonly></label>
+      </div>
+      <label class="full"><span>备注</span><input name="remark" value="{{ form.get('remark', '') }}" placeholder="可选，记录批次、站点或特殊说明"></label>
+      <datalist id="shipment-mapping-options">
+        {% for mapping in mapping_options %}
+        <option value="{{ mapping.external_sku_code }}" label="{{ mapping.external_sku_code }} / {{ mapping.sku.sku_code }} / {{ mapping.sku.name }}"></option>
+        {% endfor %}
+      </datalist>
+      <div class="full dynamic-box" data-shipment-box>
+        <div class="dynamic-header">
+          <span>发货明细</span>
+          <div class="inline-actions">
+            <button class="button ghost small" type="button" data-shipment-add-rows="1">添加一行</button>
+            <button class="button ghost small" type="button" data-shipment-add-rows="5">追加 5 行</button>
+          </div>
+        </div>
+        <div class="dynamic-rows" data-shipment-rows>
+          {% for item in form_items %}
+          <div class="dynamic-row shipment-row" data-shipment-row>
+            <input name="shipment_external_sku_code" list="shipment-mapping-options" value="{{ item.get('external_sku_code', '') }}" placeholder="搜索店铺SKU" autocomplete="off" data-shipment-external-sku>
+            <input name="shipment_quantity" type="number" min="1" value="{{ item.get('quantity', '') }}" placeholder="数量" data-shipment-quantity>
+            <input type="number" value="{{ item.get('per_box_quantity', '') }}" placeholder="每箱数量" readonly data-shipment-per-box>
+            <button class="button ghost small" type="button" data-shipment-prelock data-locked="{% if current_shipment_lock_map.get(item.get('external_sku_code', '')) %}true{% else %}false{% endif %}">{% if current_shipment_lock_map.get(item.get('external_sku_code', '')) %}已预锁{% else %}预锁定{% endif %}</button>
+            <span class="pill" data-shipment-available>可用 -</span>
+            <button class="button ghost small danger" type="button" data-shipment-remove-row>删除</button>
+          </div>
+          {% endfor %}
+          {% if form_items|length < default_shipment_rows %}
+            {% for _ in range(default_shipment_rows - form_items|length) %}
+            <div class="dynamic-row shipment-row" data-shipment-row>
+              <input name="shipment_external_sku_code" list="shipment-mapping-options" placeholder="搜索店铺SKU" autocomplete="off" data-shipment-external-sku>
+              <input name="shipment_quantity" type="number" min="1" placeholder="数量" data-shipment-quantity>
+              <input type="number" placeholder="每箱数量" readonly data-shipment-per-box>
+              <button class="button ghost small" type="button" data-shipment-prelock data-locked="false">预锁定</button>
+              <span class="pill" data-shipment-available>可用 -</span>
+              <button class="button ghost small danger" type="button" data-shipment-remove-row>删除</button>
+            </div>
+            {% endfor %}
+          {% endif %}
+        </div>
+        <template data-shipment-row-template>
+          <div class="dynamic-row shipment-row" data-shipment-row>
+            <input name="shipment_external_sku_code" list="shipment-mapping-options" placeholder="搜索店铺SKU" autocomplete="off" data-shipment-external-sku>
+            <input name="shipment_quantity" type="number" min="1" placeholder="数量" data-shipment-quantity>
+            <input type="number" placeholder="每箱数量" readonly data-shipment-per-box>
+            <button class="button ghost small" type="button" data-shipment-prelock data-locked="false">预锁定</button>
+            <span class="pill" data-shipment-available>可用 -</span>
+            <button class="button ghost small danger" type="button" data-shipment-remove-row>删除</button>
+          </div>
+        </template>
+      </div>
+      <button class="button full" type="submit">确认并预锁库存</button>
+    </form>
+  </article>
+  <article class="panel">
+    <div class="panel-header">
+      <h2>发货列表</h2>
+      <form method="get" class="inline-form filter-bar">
+        <input name="q" value="{{ q or '' }}" placeholder="搜索单号、店铺、运营、SKU">
+        <select name="store_name">
+          <option value="">全部店铺</option>
+          {% for item in stores %}
+          <option value="{{ item }}" {% if selected_store == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+        <select name="status">
+          <option value="">全部状态</option>
+          <option value="pending" {% if selected_status == 'pending' %}selected{% endif %}>待备货</option>
+          <option value="confirmed" {% if selected_status == 'confirmed' %}selected{% endif %}>已确认</option>
+        </select>
+        <button class="button ghost small" type="submit">筛选</button>
+        <a class="button ghost small" href="{{ url_for('shipment_sheet_list') }}">清空</a>
+        <a class="button ghost small" href="{{ url_for('shipment_sheet_export', q=q or '', store_name=selected_store or '', status=selected_status or '') }}">导出</a>
+      </form>
+    </div>
+    <div class="sticky-summary-bar">
+      <span class="pill">单据 {{ shipment_summary.count }}</span>
+      <span class="pill">待备货 {{ shipment_summary.pending_count }}</span>
+      <span class="pill">已确认 {{ shipment_summary.confirmed_count }}</span>
+      <span class="pill">数量 {{ shipment_summary.quantity }}</span>
+    </div>
+    <div class="stack-list">
+      {% for shipment in shipments %}
+      <details class="stack-item order-fold shipment-fold" {% if loop.first %}open{% endif %}>
+        <summary class="order-fold-summary">
+          <div class="order-fold-main">
+            <strong>{{ shipment.shipment_no }}</strong>
+            <span class="order-fold-sep">|</span>
+            <span>{{ shipment.store_name }}</span>
+            <span class="order-fold-sep">|</span>
+            <span>{{ shipment.operator_name }}</span>
+            <span class="order-fold-sep">|</span>
+            <span>{{ shipment.box_count }} 箱</span>
+            <span class="order-fold-sep">|</span>
+            <span>{{ shipment.total_quantity }} 件</span>
+            <span class="order-fold-sep">|</span>
+            <small>{{ format_dt(shipment.created_at) }}</small>
+          </div>
+          <div class="inline-actions">
+            <span class="pill {% if shipment.status == 'pending' %}warn{% endif %}">{{ shipment.status_label }}</span>
+            <span class="button ghost small order-fold-toggle">展开</span>
+          </div>
+        </summary>
+        <div class="order-fold-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>店铺SKU</th><th>仓库SKU</th><th>商品</th><th>数量</th><th>每箱</th></tr></thead>
+              <tbody>
+                {% for item in shipment.items %}
+                <tr>
+                  <td>{{ item.external_sku_code }}</td>
+                  <td>{{ item.sku.sku_code }}</td>
+                  <td>{{ item.sku.name }}</td>
+                  <td>{{ item.quantity }}</td>
+                  <td>{{ item.per_box_quantity }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% if shipment.status == 'pending' and can_manage_shipment_sheets() %}
+          <form method="post" action="{{ url_for('shipment_sheet_update', shipment_id=shipment.id, q=q or '', status=selected_status or '', store_name=selected_store or '') }}" class="form-grid compact-form">
+            {{ csrf_field() }}
+            <label><span>店铺</span><input name="store_name" value="{{ shipment.store_name }}" required></label>
+            <label><span>箱数</span><input type="number" name="box_count" min="1" value="{{ shipment.box_count }}" required></label>
+            <label class="full"><span>备注</span><input name="remark" value="{{ shipment.remark }}"></label>
+            {% for item in shipment.items %}
+            <div class="dynamic-row shipment-row">
+              <input name="shipment_external_sku_code" list="shipment-mapping-options" value="{{ item.external_sku_code }}" placeholder="搜索店铺SKU">
+              <input name="shipment_quantity" type="number" min="1" value="{{ item.quantity }}" placeholder="数量">
+              <input type="number" value="{{ item.per_box_quantity }}" readonly placeholder="每箱数量">
+              <span class="pill">仓库SKU {{ item.sku.sku_code }}</span>
+            </div>
+            {% endfor %}
+            <div class="inline-actions">
+              <button class="button small" type="submit">保存修改</button>
+            </div>
+          </form>
+          {% endif %}
+          <div class="inline-actions" style="margin-top: 10px;">
+            {% if shipment.status == 'pending' and can_confirm_shipment_sheets() %}
+            <form method="post" action="{{ url_for('shipment_sheet_confirm', shipment_id=shipment.id, q=q or '', status=selected_status or '', store_name=selected_store or '') }}">
+              {{ csrf_field() }}
+              <button class="button small" type="submit">仓管确认备货</button>
+            </form>
+            {% endif %}
+            {% if can_delete_shipment_sheet(shipment) %}
+            <form method="post" action="{{ url_for('shipment_sheet_delete', shipment_id=shipment.id, q=q or '', status=selected_status or '', store_name=selected_store or '') }}" onsubmit="return confirm('确认删除这张发货表吗？')">
+              {{ csrf_field() }}
+              <button class="button ghost small danger" type="submit">删除</button>
+            </form>
+            {% endif %}
+            {% if shipment.warehouse_confirmer_name %}
+            <span class="pill">仓管：{{ shipment.warehouse_confirmer_name }}</span>
+            {% endif %}
+          </div>
+        </div>
+      </details>
+      {% else %}
+      <p class="muted">暂无发货表数据。</p>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+<script type="application/json" id="shipment-available-data">{{ available_by_external_code|tojson }}</script>
+{% endblock %}

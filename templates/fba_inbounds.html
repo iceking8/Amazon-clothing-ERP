@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}FBA在途管理 - 苏客 ERP{% endblock %}
+{% block page_title %}FBA在途管理{% endblock %}
+{% block content %}
+<section class="layout-two wide-left fba-compact-panels fba-inbound-top">
+  <article class="panel">
+    <div class="panel-header"><h2>导入亚马逊发货单</h2></div>
+    <form method="post" enctype="multipart/form-data" class="form-grid single fba-compact-form">
+      {{ csrf_field() }}
+      <label class="full"><span>亚马逊发货单</span><input type="file" name="inbound_file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" required></label>
+      <p class="hint">系统会从发货单里自动提取店铺SKU和已发货数量，并作为在途数量纳入 FBA 发货计算器。</p>
+      <button class="button action-short-blue" type="submit">导入在途货件</button>
+    </form>
+  </article>
+  <article class="panel">
+    <div class="panel-header"><h2>汇总</h2></div>
+    <section class="stats-grid fba-tight-stats">
+      <article class="stat-card"><span>记录数</span><strong>{{ summary.count }}</strong></article>
+      <article class="stat-card"><span>活跃在途</span><strong>{{ summary.active_count }}</strong></article>
+      <article class="stat-card"><span>在途数量</span><strong>{{ summary.active_qty }}</strong></article>
+    </section>
+  </article>
+</section>
+
+<section class="panel fba-inbound-records">
+  <div class="panel-header">
+    <h2>在途记录</h2>
+    <form method="get" class="inline-form filter-bar">
+      <input name="q" value="{{ q or '' }}" placeholder="搜索货件号或店铺SKU">
+      <select name="status">
+        <option value="">全部状态</option>
+        <option value="active" {% if selected_status == 'active' %}selected{% endif %}>在途</option>
+        <option value="received" {% if selected_status == 'received' %}selected{% endif %}>已接收</option>
+        <option value="deleted" {% if selected_status == 'deleted' %}selected{% endif %}>已删除</option>
+      </select>
+      <button class="button ghost small" type="submit">筛选</button>
+      <a class="button ghost small" href="{{ url_for('fba_inbound_list') }}">清空</a>
+    </form>
+  </div>
+  <div class="stack-list">
+    {% for group in record_groups %}
+    <details class="stack-item order-fold">
+      <summary class="order-fold-summary">
+        <div class="order-fold-main">
+          <strong>{{ group.shipment_ref }}</strong>
+          <span class="order-fold-sep">|</span>
+          <span>活跃 {{ group.active_count }} 条</span>
+          <span class="order-fold-sep">|</span>
+          <span>在途 {{ group.active_qty }}</span>
+        </div>
+        <div class="inline-actions">
+          <span class="button ghost small order-fold-toggle">展开</span>
+          {% if group.can_edit %}
+          <form method="post" action="{{ url_for('fba_inbound_group_delete', q=q or '', status=selected_status or '') }}" onsubmit="return confirm('确认整票删除这份在途货件吗？删除后不会保留记录。')">
+            {{ csrf_field() }}
+            <input type="hidden" name="shipment_ref" value="{{ group.shipment_ref }}">
+            <button class="button ghost small danger" type="submit">删除</button>
+          </form>
+          {% endif %}
+        </div>
+      </summary>
+      <div class="table-wrap order-fold-body">
+        <table class="fba-compact-table">
+          <thead>
+            <tr>
+              <th>店铺SKU</th>
+              <th>数量</th>
+              <th>状态</th>
+              <th>上传人</th>
+              <th>导入时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for record in group.records %}
+            <tr>
+              <td>{{ record.external_sku_code }}</td>
+              <td>{{ record.quantity }}</td>
+              <td><span class="pill {% if record.status == 'active' %}warn{% endif %}">{{ record.status_label }}</span></td>
+              <td>{{ record.uploader.full_name if record.uploader else '-' }}</td>
+              <td>{{ format_dt(record.created_at) }}</td>
+              <td>
+                <div class="inline-actions">
+                  {% if record.status == 'active' and can_edit_fba_inbound_record(record) %}
+                  <form method="post" action="{{ url_for('fba_inbound_receive', record_id=record.id, q=q or '', status=selected_status or '') }}">
+                    {{ csrf_field() }}
+                    <button class="button small" type="submit">标记已接收</button>
+                  </form>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {% else %}
+    <p class="muted">暂无在途记录。</p>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

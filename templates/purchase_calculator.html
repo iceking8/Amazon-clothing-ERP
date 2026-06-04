@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}采购计算器 - 苏客科技ERP{% endblock %}
+{% block page_title %}采购计算器{% endblock %}
+{% block content %}
+{% set summary = result.get('summary', {}) %}
+{% set rows = result.get('rows', []) %}
+{% set params = result.get('params', {}) %}
+{% set sales_window = result.get('sales_window', {}) %}
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>计算参数</h2>
+    {% if rows %}
+    <a class="button ghost small" href="{{ url_for('purchase_calculator_export') }}">导出结果</a>
+    {% endif %}
+  </div>
+  <form method="post" enctype="multipart/form-data" class="form-grid purchase-calc-form">
+    {{ csrf_field() }}
+    <label><span>仓库</span>
+      <select name="warehouse_id" required>
+        <option value="">请选择仓库</option>
+        {% for warehouse in warehouses %}
+        <option value="{{ warehouse.id }}" {% if (form.get('warehouse_id')|string) == (warehouse.id|string) %}selected{% endif %}>{{ warehouse.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label><span>覆盖天数</span><input type="number" name="coverage_days" min="1" value="{{ form.get('coverage_days', '30') }}"></label>
+    <label><span>采购到货天数</span><input type="number" name="lead_days" min="1" value="{{ form.get('lead_days', '15') }}"></label>
+    <label><span>最近30天销量表</span><input type="file" name="sales_30_file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" required></label>
+    <label><span>最小建议数量</span><input type="number" name="suggested_min" min="0" value="{{ form.get('suggested_min', '') }}" placeholder="可留空"></label>
+    <label class="purchase-calc-search"><span>SKU / 系列筛选</span><input name="sku_keyword" value="{{ form.get('sku_keyword', '') }}" placeholder="输入 1008 只看 1008 系列"></label>
+    <label class="inline-check purchase-calc-check">
+      <input type="hidden" name="positive_only" value="0">
+      <input type="checkbox" name="positive_only" value="1" {% if form.get('positive_only', '1') in ['1', 'true', 'on'] %}checked{% endif %}>
+      <span>只看需采购</span>
+    </label>
+    <button class="button action-short-blue" type="submit">开始计算</button>
+  </form>
+  <p class="hint">建议量 = 目标库存 - 预计可用；需求日均 = 销量加权日均 × 趋势系数；目标库存 = 安全库存 + 需求日均 × 覆盖天数；预计可用 = 当前库存 + 采购在途 - 到货前预计消耗。</p>
+</section>
+
+{% if rows %}
+<section class="stats-grid purchase-calc-stats">
+  <article class="stat-card"><span>结果 SKU</span><strong>{{ summary.get('sku_count', 0) }}</strong></article>
+  <article class="stat-card"><span>需采购 SKU</span><strong>{{ summary.get('suggested_sku_count', 0) }}</strong></article>
+  <article class="stat-card"><span>建议采购总量</span><strong>{{ summary.get('suggested_qty', 0) }}</strong></article>
+  <article class="stat-card"><span>采购在途</span><strong>{{ summary.get('open_purchase_qty', 0) }}</strong></article>
+  <article class="stat-card"><span>30天销量</span><strong>{{ summary.get('sales_30', 0) }}</strong></article>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>采购建议</h2>
+    <p class="muted">当前仓库：{{ (warehouses|selectattr('id', 'equalto', params.get('warehouse_id'))|list|first).name if params.get('warehouse_id') else '-' }}{% if sales_window.get('window_end_date') %}；销量截止：{{ sales_window.get('window_end_date') }}{% endif %}</p>
+  </div>
+
+  {% if current_user.has_permission('purchase.manage') %}
+  <form method="post" action="{{ url_for('purchase_calculator_generate_order') }}" id="purchase-calc-order-form" class="form-grid purchase-calc-generate">
+    {{ csrf_field() }}
+    <input type="hidden" name="warehouse_id" value="{{ params.get('warehouse_id', '') }}">
+    <label><span>供应商</span>
+      <select name="supplier_id" required>
+        <option value="">请选择供应商</option>
+        {% for supplier in suppliers %}
+        <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label><span>预计到货日期</span><input type="date" name="expected_date"></label>
+    <label class="purchase-calc-remark"><span>备注</span><input name="remark" value="由采购计算器生成的草稿"></label>
+    <button class="button small action-short-blue" type="submit">生成采购订单草稿</button>
+  </form>
+  {% else %}
+  <p class="hint">当前账号可计算和导出建议；生成采购订单草稿需要“采购管理”权限。</p>
+  {% endif %}
+
+  <div class="table-wrap">
+    <table class="purchase-calc-table">
+      <thead>
+        <tr>
+          {% if current_user.has_permission('purchase.manage') %}<th class="select-cell">选择</th>{% endif %}
+          <th>SKU</th>
+          <th>商品</th>
+          <th>当前库存</th>
+          <th>安全库存</th>
+          <th>采购在途</th>
+          <th>7天出库</th>
+          <th>14天出库</th>
+          <th>30天出库</th>
+          <th>7/14/30天销量</th>
+          <th>销量趋势日均</th>
+          <th>趋势系数</th>
+          <th>需求来源</th>
+          <th>需求日均</th>
+          <th>到货前消耗</th>
+          <th>目标库存</th>
+          <th>预计可用</th>
+          <th>建议采购量</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          {% if current_user.has_permission('purchase.manage') %}
+          <td class="select-cell">
+            {% if row.suggested_qty > 0 %}
+            <input type="checkbox" name="purchase_calc_sku_id" value="{{ row.sku_id }}" form="purchase-calc-order-form" checked>
+            {% endif %}
+          </td>
+          {% endif %}
+          <td>{{ row.sku_code }}</td>
+          <td>{{ row.name }}<br><small>{{ row.color or '-' }} / {{ row.size or '-' }}</small></td>
+          <td>{{ row.current_stock }}</td>
+          <td>{{ row.safety_stock }}</td>
+          <td>{{ row.open_purchase_qty }}</td>
+          <td>{{ row.outbound_7 }}</td>
+          <td>{{ row.outbound_14 }}</td>
+          <td>{{ row.outbound_30 }}</td>
+          <td>{{ row.sales_7 }} / {{ row.sales_14 }} / {{ row.sales_30 }}</td>
+          <td>{{ "%.2f"|format(row.sales_trend_daily) }}</td>
+          <td>{{ "%.2f"|format(row.sales_trend_factor) }}</td>
+          <td>{{ row.demand_source }}</td>
+          <td>{{ "%.2f"|format(row.daily_consumption) }}</td>
+          <td>{{ row.lead_consumption }}</td>
+          <td>{{ row.target_stock }}</td>
+          <td>{{ row.projected_available }}</td>
+          <td>
+            {% if current_user.has_permission('purchase.manage') and row.suggested_qty > 0 %}
+            <input class="purchase-calc-qty" type="number" min="1" name="purchase_calc_quantity__{{ row.sku_id }}" value="{{ row.suggested_qty }}" form="purchase-calc-order-form">
+            {% else %}
+            <strong>{{ row.suggested_qty }}</strong>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+<section class="panel empty-state">
+  <p class="muted">选择仓库和参数后点击“开始计算”，这里会显示每个 SKU 的采购建议。</p>
+</section>
+{% endif %}
+{% endblock %}

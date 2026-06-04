@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}库存查询 - 服装 ERP{% endblock %}
+{% block page_title %}库存查询{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-header">
+    <h2>库存汇总</h2>
+    <form method="get" class="inline-form filter-bar">
+      <select name="warehouse_id">
+        <option value="">全部仓库</option>
+        {% for warehouse in warehouses %}
+        <option value="{{ warehouse.id }}" {% if selected_warehouse_id == warehouse.id %}selected{% endif %}>{{ warehouse.name }}</option>
+        {% endfor %}
+      </select>
+      <input name="sku_keyword" value="{{ sku_keyword or '' }}" placeholder="搜索 SKU 编码、名称、条码">
+      <input type="date" name="start_date" value="{{ start_date or '' }}">
+      <input type="date" name="end_date" value="{{ end_date or '' }}">
+      <button class="button ghost small" type="submit">筛选</button>
+      <a class="button ghost small" href="{{ url_for('inventory') }}">清空</a>
+    </form>
+  </div>
+  <div class="table-wrap sticky-table-wrap">
+    <table class="interactive-table">
+      <thead>
+        <tr>
+          <th>SKU 编码</th>
+          <th>商品名称</th>
+          <th>品类</th>
+          <th>当前库存</th>
+          <th>待处理</th>
+          <th>返修中</th>
+          <th>已完成</th>
+          <th>已报废</th>
+          <th>安全库存</th>
+          {% if can_view_prices() %}<th>库存价值</th>{% endif %}
+          <th>状态</th>
+        </tr>
+        <tr class="table-summary-row">
+          <th>汇总 {{ inventory_summary.sku_count }}</th>
+          <th>-</th>
+          <th>-</th>
+          <th>{{ inventory_summary.quantity }}</th>
+          <th>{{ inventory_summary.pending_quantity }}</th>
+          <th>{{ inventory_summary.repairing_quantity }}</th>
+          <th>{{ inventory_summary.done_quantity }}</th>
+          <th>{{ inventory_summary.scrapped_quantity }}</th>
+          <th>{{ inventory_summary.safety_stock }}</th>
+          {% if can_view_prices() %}<th>{{ "%.2f"|format(inventory_summary.stock_value) }}</th>{% endif %}
+          <th>预警 {{ inventory_summary.low_stock_count }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in stock_rows %}
+        <tr class="{% if row.low_stock %}table-warn{% endif %}">
+          <td>{{ row.sku.sku_code }}</td>
+          <td>{{ row.sku.name }}</td>
+          <td>{{ row.sku.category }}</td>
+          <td>{{ row.quantity }}</td>
+          <td>{{ row.pending_quantity }}</td>
+          <td>{{ row.repairing_quantity }}</td>
+          <td>{{ row.done_quantity }}</td>
+          <td>{{ row.scrapped_quantity }}</td>
+          <td>{{ row.sku.safety_stock }}</td>
+          {% if can_view_prices() %}<td>{{ "%.2f"|format(row.stock_value) }}</td>{% endif %}
+          <td>
+            {% if row.low_stock %}
+            <span class="pill warn">库存偏低</span>
+            {% else %}
+            <span class="pill">正常</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="{{ 11 if can_view_prices() else 10 }}" class="muted-cell">暂无库存数据。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}系统信息 / 版本信息 - 苏客 ERP{% endblock %}
+{% block page_title %}系统信息 / 版本信息{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-header"><h2>当前实例信息</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>项目</th>
+          <th>内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for label, value in system_info_items %}
+        <tr>
+          <td>{{ label }}</td>
+          <td>{{ value }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h2>登录安全配置</h2></div>
+  <form method="post" action="{{ url_for('system_info_update_login_security') }}" class="form-grid compact-form">
+    {{ csrf_field() }}
+    <label>
+      <span>失败锁定阈值</span>
+      <input name="login_lock_threshold" type="number" min="1" value="{{ login_security_config.login_lock_threshold }}">
+    </label>
+    <label>
+      <span>锁定时长（分钟）</span>
+      <input name="login_lock_duration_minutes" type="number" min="1" value="{{ login_security_config.login_lock_duration_minutes }}">
+    </label>
+    <label class="full">
+      <span>应急管理员白名单 IP</span>
+      <textarea name="emergency_admin_ip_whitelist" placeholder="多个 IP 用逗号或换行分隔">{{ login_security_config.emergency_admin_ip_whitelist }}</textarea>
+    </label>
+    <p class="hint full">
+      当前规则：连续失败 {{ login_security_config.login_lock_threshold }} 次后锁定 {{ login_security_config.login_lock_duration_label }}。
+      超级管理员也遵守此规则；应急管理员仅允许从白名单 IP 登录。
+    </p>
+    <button class="button small" type="submit">保存登录安全配置</button>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h2>维护说明</h2></div>
+  <div class="stack-list">
+    <div class="stack-item">
+      <strong>推荐更新方式</strong>
+      <p>当前页面只展示版本和运行信息，不直接执行更新操作。Docker 部署建议通过服务器上的部署脚本，或使用 `docker compose up -d --build` 更新。</p>
+    </div>
+    <div class="stack-item">
+      <strong>数据库提醒</strong>
+      <p>更新前建议先备份当前数据库文件，尤其是在修改数据结构或升级镜像前。</p>
+    </div>
+  </div>
+</section>
+{% endblock %}

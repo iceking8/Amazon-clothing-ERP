@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}仪表盘 - 服装 ERP{% endblock %}
+{% block page_title %}仪表盘{% endblock %}
+{% block content %}
+<section class="stats-grid">
+  <article class="stat-card"><span>SKU 总数</span><strong>{{ stats.sku_count }}</strong></article>
+  <article class="stat-card"><span>采购单数</span><strong>{{ stats.purchase_count }}</strong></article>
+  <article class="stat-card"><span>销售单数</span><strong>{{ stats.sales_count }}</strong></article>
+  <article class="stat-card highlight"><span>库存总量</span><strong>{{ stats.stock_qty }}</strong></article>
+  <article class="stat-card highlight"><span>库存总价值</span><strong>{{ "%.2f"|format(stats.inventory_value) }}</strong></article>
+  <article class="stat-card highlight"><span>固定资产总值</span><strong>{{ "%.2f"|format(stats.fixed_asset_value) }}</strong></article>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>SKU 排行筛选</h2>
+    <form method="get" class="inline-form filter-bar">
+      <input name="sku_keyword" value="{{ sku_keyword or '' }}" placeholder="搜索 SKU 编码、名称、条码">
+      <button class="button ghost small" type="submit">筛选</button>
+      <a class="button ghost small" href="{{ url_for('dashboard') }}">清空</a>
+    </form>
+  </div>
+</section>
+
+<section class="panel-grid">
+  <article class="panel">
+    <div class="panel-header">
+      <h2>SKU 出库/销售数量排行榜</h2>
+      <span class="pill">{{ outbound_rankings|length }} 条</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>SKU 编码</th><th>商品名称</th><th>规格</th><th>数量</th></tr>
+        </thead>
+        <tbody>
+          {% for row in outbound_rankings %}
+          <tr>
+            <td>{{ row.sku_code }}</td>
+            <td>{{ row.name }}</td>
+            <td>{{ row.color or '-' }} / {{ row.size or '-' }}</td>
+            <td>{{ row.quantity }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="muted-cell">暂无符合条件的出库或销售数据。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-header">
+      <h2>SKU 入库数量排行榜</h2>
+      <span class="pill">{{ inbound_rankings|length }} 条</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>SKU 编码</th><th>商品名称</th><th>规格</th><th>数量</th></tr>
+        </thead>
+        <tbody>
+          {% for row in inbound_rankings %}
+          <tr>
+            <td>{{ row.sku_code }}</td>
+            <td>{{ row.name }}</td>
+            <td>{{ row.color or '-' }} / {{ row.size or '-' }}</td>
+            <td>{{ row.quantity }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="muted-cell">暂无符合条件的入库数据。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-header"><h2>库存预警</h2><span class="pill warn">{{ low_stock|length }} 项</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>SKU 编码</th><th>商品名称</th><th>当前库存</th><th>安全库存</th></tr></thead>
+        <tbody>
+          {% for row in low_stock %}
+          <tr class="table-warn"><td>{{ row.sku.sku_code }}</td><td>{{ row.sku.name }}</td><td>{{ row.quantity }}</td><td>{{ row.sku.safety_stock }}</td></tr>
+          {% else %}
+          <tr><td colspan="4" class="muted-cell">暂无库存预警商品。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-header"><h2>最近采购订单</h2></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>订单号</th><th>供应商</th><th>仓库</th><th>状态</th></tr></thead>
+        <tbody>
+          {% for order in recent_purchases %}
+          <tr><td>{{ order.order_no }}</td><td>{{ order.supplier.name }}</td><td>{{ order.warehouse.name }}</td><td>{{ order.status_label }}</td></tr>
+          {% else %}
+          <tr><td colspan="4" class="muted-cell">暂无采购订单。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-header"><h2>最近销售订单</h2></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>订单号</th><th>客户</th><th>仓库</th><th>状态</th></tr></thead>
+        <tbody>
+          {% for order in recent_sales %}
+          <tr><td>{{ order.order_no }}</td><td>{{ order.customer_name }}</td><td>{{ order.warehouse.name }}</td><td>{{ order.status_label }}</td></tr>
+          {% else %}
+          <tr><td colspan="4" class="muted-cell">暂无销售订单。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-header"><h2>最近返修记录</h2></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>返修单号</th><th>商品</th><th>状态</th></tr></thead>
+        <tbody>
+          {% for repair in recent_repairs %}
+          <tr><td>{{ repair.repair_no }}</td><td>{{ repair.sku.name }}</td><td>{{ repair.status_label }}</td></tr>
+          {% else %}
+          <tr><td colspan="3" class="muted-cell">暂无返修记录。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+</section>
+{% endblock %}

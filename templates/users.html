@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}用户管理 - 苏客科技ERP{% endblock %}
+{% block page_title %}用户管理{% endblock %}
+{% block content %}
+<section class="layout-two">
+  <article class="panel">
+    <div class="panel-header"><h2>新建用户</h2></div>
+    <form method="post" class="form-grid">
+      {{ csrf_field() }}
+      <label><span>用户名</span><input name="username" required placeholder="登录用户名"></label>
+      <label><span>姓名</span><input name="full_name" required placeholder="真实姓名"></label>
+      <label><span>密码</span><input name="password" type="password" required placeholder="至少 8 位"></label>
+      <label class="inline-check"><input type="checkbox" name="is_active" checked> 启用账号</label>
+      <label class="full">
+        <span>分配角色</span>
+        <div class="checkbox-grid">
+          {% for role in roles %}
+          <label class="check-item"><input type="checkbox" name="role_ids" value="{{ role.id }}"> {{ role.name }}</label>
+          {% endfor %}
+        </div>
+      </label>
+      <p class="hint">SKU 授权已改到 SKU 列表逐条或批量维护。登录安全配置可在“系统信息 / 版本信息”里调整。</p>
+      <button class="button full action-short-blue" type="submit">保存用户</button>
+    </form>
+  </article>
+  <article class="panel">
+    <div class="panel-header"><h2>用户列表</h2></div>
+    <div class="stack-list">
+      {% for user in users %}
+      <details class="stack-item user-card">
+        <summary class="user-card-summary">
+          <div class="user-card-main">
+            <strong>{{ user.username }}</strong>
+            <p>{{ user.full_name }} / {{ user.role_names }}</p>
+            <small>
+              已授权 SKU：{{ user.authorized_skus|length }}
+              {% if user.is_emergency_account %} / 本地应急管理员{% endif %}
+            </small>
+            <small>
+              失败次数：{{ user.failed_login_attempts }}
+              {% if user.locked_until %}
+                / 锁定至：{{ format_dt(user.locked_until) }}
+              {% else %}
+                / 当前未锁定
+              {% endif %}
+            </small>
+          </div>
+          <div class="user-card-meta">
+            <small class="{% if user.is_active %}text-success{% else %}text-error{% endif %}">{{ "已启用" if user.is_active else "已停用" }}</small>
+            <span class="button ghost small user-card-toggle">编辑</span>
+          </div>
+        </summary>
+        <div class="user-card-body">
+          <form method="post" action="{{ url_for('user_update', user_id=user.id) }}" class="form-grid compact-form">
+            {{ csrf_field() }}
+            <label><span>用户名</span><input name="username" value="{{ user.username }}" required></label>
+            <label><span>姓名</span><input name="full_name" value="{{ user.full_name }}" required></label>
+            <label class="inline-check"><input type="checkbox" name="is_active" {% if user.is_active %}checked{% endif %}> 启用账号</label>
+            <label class="full">
+              <span>分配角色</span>
+              <div class="checkbox-grid compact-checkbox-grid">
+                {% for role in roles %}
+                <label class="check-item"><input type="checkbox" name="role_ids" value="{{ role.id }}" {% if role in user.roles %}checked{% endif %}> {{ role.name }}</label>
+                {% endfor %}
+              </div>
+            </label>
+            <button class="button small" type="submit">更新信息</button>
+          </form>
+          <form method="post" action="{{ url_for('user_change_password', user_id=user.id) }}" class="inline-form user-card-inline-form">
+            {{ csrf_field() }}
+            <input name="new_password" type="password" placeholder="输入新密码">
+            <button class="button ghost small" type="submit">重置密码</button>
+          </form>
+          <div class="inline-actions user-card-inline-form">
+            <form method="post" action="{{ url_for('user_unlock', user_id=user.id) }}">
+              {{ csrf_field() }}
+              <button class="button ghost small" type="submit">立即解锁</button>
+            </form>
+            {% if user.is_emergency_account %}
+            <span class="muted">仅允许从应急白名单 IP 登录</span>
+            {% endif %}
+          </div>
+          <form method="post" action="{{ url_for('user_delete', user_id=user.id) }}" class="user-card-delete" onsubmit="return confirm('确认删除该用户？')">
+            {{ csrf_field() }}
+            <button class="button ghost small danger" type="submit">删除用户</button>
+          </form>
+        </div>
+      </details>
+      {% else %}
+      <p class="muted">暂无用户数据。</p>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+{% endblock %}

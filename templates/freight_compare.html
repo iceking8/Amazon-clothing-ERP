@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% block title %}货代比价 - 苏客 ERP{% endblock %}
+{% block page_title %}货代比价{% endblock %}
+{% block content %}
+{% set form = quote_form or {} %}
+<script id="warehouse-postal-map" type="application/json">{{ warehouse_postal_map|tojson }}</script>
+
+<section class="layout-two wide-left freight-compare-top">
+  <article class="panel freight-quote-panel">
+    <div class="panel-header">
+      <h2>发货比价</h2>
+      {% if active_rate_books %}
+      <span class="pill">启用价格表 {{ active_rate_books|length }}</span>
+      {% endif %}
+    </div>
+    <form method="post" action="{{ url_for('freight_compare_quote') }}" enctype="multipart/form-data" class="form-grid">
+      {{ csrf_field() }}
+      <label><span>起运仓</span>
+        <select name="origin_region">
+          {% for item in ["义乌", "深圳", "泉州", "青岛", "华东", "华南"] %}
+          <option value="{{ item }}" {% if form.get('origin_region', '义乌') == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label><span>品名数量</span><input type="number" name="item_name_count" min="1" value="{{ form.get('item_name_count', '1') }}"></label>
+      <label class="inline-check"><input type="checkbox" name="customs_required" {% if form.get('customs_required') %}checked{% endif %}> 需要报关</label>
+      <label class="inline-check"><input type="checkbox" name="inspection_required" {% if form.get('inspection_required') %}checked{% endif %}> 需要商检</label>
+      <label class="inline-check"><input type="checkbox" name="clothing_surcharge_enabled" {% if form.get('clothing_surcharge_enabled', True) %}checked{% endif %}> 服装附加费</label>
+      <label class="full"><span>导入亚马逊分仓表 / 自制货件表</span><input type="file" name="quote_file" accept=".csv,.tsv,.txt,.xlsx,.xlsm"></label>
+      <p class="hint full">上传表可包含：仓库代码、邮编、重量、箱数、长、宽、高。也可以直接在下方手动填写。</p>
+
+      <div class="table-wrap full">
+        <table class="interactive-table freight-input-table">
+          <thead>
+            <tr>
+              <th>FBA仓库</th>
+              <th>邮编</th>
+              <th>实重KG</th>
+              <th>箱数</th>
+              <th>长CM</th>
+              <th>宽CM</th>
+              <th>
+                <label class="freight-dimension-copy">
+                  <input type="checkbox" data-copy-dimensions-all>
+                  <span>高CM</span>
+                  <small>应用于所有仓库</small>
+                </label>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for _ in range(6) %}
+            <tr>
+              <td><input name="quote_warehouse_code" placeholder="ONT8"></td>
+              <td><input name="quote_postal_code" placeholder="92551"></td>
+              <td><input name="quote_weight_kg" type="number" step="0.01" min="0" placeholder="100"></td>
+              <td><input name="quote_box_count" type="number" min="1" value="1"></td>
+              <td><input name="quote_length_cm" type="number" step="0.1" min="0"></td>
+              <td><input name="quote_width_cm" type="number" step="0.1" min="0"></td>
+              <td><input name="quote_height_cm" type="number" step="0.1" min="0"></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <button class="button full" type="submit">开始比价</button>
+    </form>
+  </article>
+
+  <article class="panel freight-upload-panel">
+    <div class="panel-header"><h2>上传价格表</h2></div>
+    <form method="post" action="{{ url_for('freight_rate_book_upload') }}" enctype="multipart/form-data" class="form-grid">
+      {{ csrf_field() }}
+      <label><span>货代</span>
+        <select name="forwarder_name">
+          <option value="">自动识别</option>
+          <option value="盈和">盈和</option>
+          <option value="开渠达">开渠达</option>
+          <option value="鼎邦">鼎邦</option>
+          <option value="鸿帆">鸿帆</option>
+        </select>
+      </label>
+      <label><span>版本</span><input name="version_label" placeholder="2026-05-25"></label>
+      <label class="full"><span>价格表文件</span><input type="file" name="rate_file" accept=".xlsx,.xlsm" required></label>
+      <button class="button full" type="submit">上传并解析</button>
+    </form>
+
+    <div class="panel-header tight-header"><h2>价格表版本</h2></div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>货代</th><th>版本</th><th>价格行</th><th>报关规则</th><th>服装附加费/kg</th><th>状态</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+          {% for book in rate_books %}
+          {% set summary = rate_book_summaries.get(book.id, {}) %}
+          <tr>
+            <td>{{ book.forwarder_name }}</td>
+            <td>{{ book.version_label or "-" }}</td>
+            <td>{{ summary.get("rate_count", 0) }}</td>
+            <td>{{ summary.get("customs_rule_count", 0) }}</td>
+            <td>
+              <form method="post" action="{{ url_for('freight_rate_book_surcharge', rate_book_id=book.id) }}" class="inline-actions freight-rate-book-actions">
+                {{ csrf_field() }}
+                <input class="compact-number-input" type="number" name="clothing_surcharge_per_kg" min="0" step="0.01" value="{{ '%.2f'|format(book.clothing_surcharge_per_kg or 0) }}">
+                <button class="button ghost small" type="submit">保存</button>
+              </form>
+            </td>
+            <td><span class="pill {% if book.status == 'active' %}info{% endif %}">{{ book.status_label }}</span></td>
+            <td>
+              <div class="inline-actions freight-rate-book-actions">
+              <form method="post" action="{{ url_for('freight_rate_book_archive', rate_book_id=book.id) }}">
+                {{ csrf_field() }}
+                <button class="button ghost small" type="submit">{% if book.status == 'active' %}停用{% else %}启用{% endif %}</button>
+              </form>
+              <form method="post" action="{{ url_for('freight_rate_book_delete', rate_book_id=book.id) }}" onsubmit="return confirm('确认删除这份价格表版本吗？相关价格行、报关规则和偏远邮编也会一起删除。')">
+                {{ csrf_field() }}
+                <button class="button ghost small danger" type="submit">删除</button>
+              </form>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="muted-cell">暂无价格表，请先上传。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel-header tight-header"><h2>仓库邮编库</h2><span class="pill">已收录 {{ warehouse_postal_codes|length }}</span></div>
+    <form method="post" action="{{ url_for('freight_warehouse_postal_upload') }}" enctype="multipart/form-data" class="form-grid">
+      {{ csrf_field() }}
+      <label class="full"><span>仓库邮编表</span><input type="file" name="warehouse_postal_file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" required></label>
+      <div class="inline-actions full freight-rate-book-actions">
+        <button class="button small" type="submit">上传邮编库</button>
+        <a class="button ghost small" href="{{ url_for('freight_warehouse_postal_template') }}">下载模板</a>
+      </div>
+    </form>
+    <p class="hint full freight-postal-hint">邮编库只用于自动带出邮编，不在这里展开明细，避免占用比价页面空间。</p>
+  </article>
+</section>
+
+{% if quote_payload and quote_payload.options %}
+<section class="panel freight-results-panel">
+  <div class="panel-header">
+    <h2>比价结果 {{ quote_payload.batch.quote_no }}</h2>
+    <a class="button ghost small" href="{{ url_for('freight_compare_export', batch_id=quote_payload.batch.id) }}">导出结果</a>
+  </div>
+  <section class="stats-grid freight-summary-grid">
+    <article class="stat-card"><span>货件行</span><strong>{{ quote_payload.summary.get("item_count", 0) }}</strong></article>
+    <article class="stat-card"><span>报价选项</span><strong>{{ quote_payload.summary.get("option_count", 0) }}</strong></article>
+    <article class="stat-card"><span>最低总价</span><strong>{{ "%.2f"|format(quote_payload.summary.get("best_total_cost", 0)) }}</strong></article>
+    <article class="stat-card"><span>未匹配</span><strong>{{ quote_payload.summary.get("missing_item_count", 0) }}</strong></article>
+  </section>
+  <div class="table-wrap sticky-table-wrap">
+    <table class="interactive-table freight-result-table" data-sortable-table>
+      <thead>
+        <tr>
+          <th data-sort-type="number">排名</th>
+          <th>推荐</th>
+          <th data-sort-type="text">货代</th>
+          <th data-sort-type="text">渠道</th>
+          <th data-sort-type="number">总费用</th>
+          <th data-sort-type="number">基础运费</th>
+          <th data-sort-type="number">附加费</th>
+          <th data-sort-type="number">报关费</th>
+          <th data-sort-type="number">计费重</th>
+          <th data-sort-type="number">单公斤</th>
+          <th data-sort-type="number">时效</th>
+          <th>备注</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for option in quote_payload.options|sort(attribute='rank_no') %}
+        <tr>
+          <td data-sort-value="{{ option.rank_no }}">{{ option.rank_no }}</td>
+          <td><span class="pill {% if '最低价' in option.recommendation %}info{% endif %}">{{ option.recommendation or "-" }}</span></td>
+          <td>{{ option.forwarder_name }}</td>
+          <td>{{ option.channel_name }}</td>
+          <td data-sort-value="{{ option.total_cost }}"><strong>{{ "%.2f"|format(option.total_cost) }}</strong></td>
+          <td data-sort-value="{{ option.freight_cost }}">{{ "%.2f"|format(option.freight_cost) }}</td>
+          <td data-sort-value="{{ option.surcharge_cost }}">{{ "%.2f"|format(option.surcharge_cost) }}</td>
+          <td data-sort-value="{{ option.customs_cost }}">{{ "%.2f"|format(option.customs_cost) }}</td>
+          <td data-sort-value="{{ option.chargeable_weight }}">{{ "%.2f"|format(option.chargeable_weight) }}</td>
+          <td data-sort-value="{{ option.total_cost / option.chargeable_weight if option.chargeable_weight else 0 }}">{{ "%.2f"|format(option.total_cost / option.chargeable_weight if option.chargeable_weight else 0) }}</td>
+          {% set transit_min = option.transit_days_min or 9999 %}
+          {% set transit_max = option.transit_days_max or transit_min %}
+          <td data-sort-value="{{ transit_min * 1000 + transit_max }}">{{ option.transit_days_min or "-" }}-{{ option.transit_days_max or "-" }}天</td>
+          <td>{{ option.notes or "-" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel freight-history-panel">
+  <div class="panel-header"><h2>历史比价</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>单号</th><th>起运仓</th><th>报关</th><th>操作人</th><th>时间</th><th>操作</th></tr>
+      </thead>
+      <tbody>
+        {% for quote in recent_quotes %}
+        <tr>
+          <td>{{ quote.quote_no }}</td>
+          <td>{{ quote.origin_region }}</td>
+          <td>{{ "是" if quote.customs_required else "否" }}</td>
+          <td>{{ quote.operator_name or "-" }}</td>
+          <td>{{ format_dt(quote.created_at) }}</td>
+          <td>
+            <div class="inline-actions">
+              <a class="button ghost small" href="{{ url_for('freight_compare_export', batch_id=quote.id) }}">导出</a>
+              <form method="post" action="{{ url_for('freight_quote_batch_delete', batch_id=quote.id) }}" onsubmit="return confirm('确认删除这条历史比价记录吗？相关报价选项也会一起删除。')">
+                {{ csrf_field() }}
+                <button class="button ghost small danger" type="submit">删除</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="muted-cell">暂无比价记录。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}分类日志 - 服装 ERP{% endblock %}
+{% block page_title %}分类日志{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-header">
+    <h2>新增 / 删除行为记录</h2>
+    <form method="get" class="inline-form filter-bar">
+      <select name="category">
+        <option value="">全部分类</option>
+        {% for category in categories %}
+        <option value="{{ category }}" {% if selected_category == category %}selected{% endif %}>{{ category }}</option>
+        {% endfor %}
+      </select>
+      <button class="button ghost small" type="submit">筛选</button>
+      <a class="button ghost small" href="{{ url_for('operation_log_list') }}">清空</a>
+    </form>
+  </div>
+  <div class="table-wrap sticky-table-wrap">
+    <table class="interactive-table">
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>分类</th>
+          <th>动作</th>
+          <th>操作人</th>
+          <th>对象</th>
+          <th>说明</th>
+          <th>IP</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in logs %}
+        <tr>
+          <td>{{ format_dt(log.created_at) }}</td>
+          <td>{{ log.category }}</td>
+          <td>{{ log.action }}</td>
+          <td>{{ log.operator.full_name if log.operator else (log.operator_username or "-") }}</td>
+          <td>{{ log.target_label }}</td>
+          <td>{{ log.detail or "-" }}</td>
+          <td>{{ log.ip_address or "-" }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="muted-cell">暂无日志记录。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

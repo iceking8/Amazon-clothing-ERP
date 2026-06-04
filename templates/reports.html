@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}报表中心 - 服装 ERP{% endblock %}
+{% block page_title %}报表中心{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-header">
+    <h2>筛选与导出</h2>
+    <form method="get" class="inline-form filter-bar">
+      <select name="warehouse_id">
+        <option value="">全部仓库</option>
+        {% for warehouse in warehouses %}
+        <option value="{{ warehouse.id }}" {% if selected_warehouse_id == warehouse.id %}selected{% endif %}>{{ warehouse.name }}</option>
+        {% endfor %}
+      </select>
+      <input name="sku_keyword" value="{{ sku_keyword or '' }}" placeholder="搜索 SKU 编码、名称、条码">
+      <input type="date" name="start_date" value="{{ start_date or '' }}">
+      <input type="date" name="end_date" value="{{ end_date or '' }}">
+      <button class="button ghost small" type="submit">筛选</button>
+      <a class="button ghost small" href="{{ url_for('reports') }}">清空</a>
+    </form>
+  </div>
+  <div class="inline-actions">
+    <a class="button ghost small" href="{{ url_for('report_export', report_type='inventory', warehouse_id=selected_warehouse_id, sku_keyword=sku_keyword, start_date=start_date, end_date=end_date) }}">导出库存报表</a>
+    <a class="button ghost small" href="{{ url_for('report_export', report_type='purchase', warehouse_id=selected_warehouse_id, sku_keyword=sku_keyword, start_date=start_date, end_date=end_date) }}">导出采购报表</a>
+    <a class="button ghost small" href="{{ url_for('report_export', report_type='sales', warehouse_id=selected_warehouse_id, sku_keyword=sku_keyword, start_date=start_date, end_date=end_date) }}">导出销售报表</a>
+  </div>
+</section>
+
+{% if can_view_prices() %}
+<section class="stats-grid">
+  <article class="stat-card highlight">
+    <span>库存总价值</span>
+    <strong>{{ "%.2f"|format(inventory_value) }}</strong>
+  </article>
+  {% for warehouse, stat in warehouse_stats.items() %}
+  <article class="stat-card">
+    <span>{{ warehouse }}</span>
+    <strong>{{ stat.qty }} 件</strong>
+    <small>价值：{{ "%.2f"|format(stat.value) }}</small>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="sticky-summary-bar">
+  <span class="pill">采购 {{ report_summary.purchase_count }}</span>
+  <span class="pill">销售 {{ report_summary.sales_count }}</span>
+  {% if can_view_prices() %}<span class="pill">采购金额 {{ "%.2f"|format(report_summary.purchase_amount) }}</span>{% endif %}
+  {% if can_view_prices() %}<span class="pill">销售金额 {{ "%.2f"|format(report_summary.sales_amount) }}</span>{% endif %}
+  {% if can_view_prices() %}<span class="pill">库存价值 {{ "%.2f"|format(inventory_value) }}</span>{% endif %}
+</section>
+
+<section class="panel-grid">
+  <article class="panel">
+    <div class="panel-header"><h2>最近采购订单</h2></div>
+    <div class="table-wrap sticky-table-wrap">
+      <table>
+        <thead>
+          <tr><th>订单号</th><th>供应商</th><th>仓库</th><th>状态</th>{% if can_view_prices() %}<th>金额</th>{% endif %}</tr>
+          <tr class="table-summary-row"><th>汇总 {{ report_summary.purchase_count }}</th><th>-</th><th>-</th><th>-</th>{% if can_view_prices() %}<th>{{ "%.2f"|format(report_summary.purchase_amount) }}</th>{% endif %}</tr>
+        </thead>
+        <tbody>
+          {% for row in purchase_rows %}
+          <tr>
+            <td>{{ row[0] }}</td>
+            <td>{{ row[1] }}</td>
+            <td>{{ row[2] }}</td>
+            <td>{{ row[3] }}</td>
+            {% if can_view_prices() %}<td>{{ "%.2f"|format(row[4] or 0) }}</td>{% endif %}
+          </tr>
+          {% else %}
+          <tr><td colspan="{{ 5 if can_view_prices() else 4 }}" class="muted-cell">暂无采购数据。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+  <article class="panel">
+    <div class="panel-header"><h2>最近销售订单</h2></div>
+    <div class="table-wrap sticky-table-wrap">
+      <table>
+        <thead>
+          <tr><th>订单号</th><th>客户</th><th>仓库</th><th>状态</th>{% if can_view_prices() %}<th>金额</th>{% endif %}</tr>
+          <tr class="table-summary-row"><th>汇总 {{ report_summary.sales_count }}</th><th>-</th><th>-</th><th>-</th>{% if can_view_prices() %}<th>{{ "%.2f"|format(report_summary.sales_amount) }}</th>{% endif %}</tr>
+        </thead>
+        <tbody>
+          {% for row in sales_rows %}
+          <tr>
+            <td>{{ row[0] }}</td>
+            <td>{{ row[1] }}</td>
+            <td>{{ row[2] }}</td>
+            <td>{{ row[3] }}</td>
+            {% if can_view_prices() %}<td>{{ "%.2f"|format(row[4] or 0) }}</td>{% endif %}
+          </tr>
+          {% else %}
+          <tr><td colspan="{{ 5 if can_view_prices() else 4 }}" class="muted-cell">暂无销售数据。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+</section>
+{% endblock %}

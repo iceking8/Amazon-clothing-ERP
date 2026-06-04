@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}仓库管理 - 服装 ERP{% endblock %}
+{% block page_title %}仓库管理{% endblock %}
+{% block content %}
+<section class="layout-two">
+  <article class="panel">
+    <div class="panel-header"><h2>新增仓库</h2></div>
+    <form method="post" class="form-grid">
+      {{ csrf_field() }}
+      <label><span>仓库名称</span><input name="name" required placeholder="如：主仓、华南仓"></label>
+      <label><span>仓库编码</span><input name="code" required placeholder="如：MAIN、SH01"></label>
+      <label><span>负责人</span><input name="manager" placeholder="仓库负责人姓名"></label>
+      <label><span>地址</span><input name="address" placeholder="仓库详细地址"></label>
+      <label class="full"><span>备注</span><textarea name="remark" placeholder="可选备注"></textarea></label>
+      <button class="button full" type="submit">保存仓库</button>
+    </form>
+  </article>
+  <article class="panel">
+    <div class="panel-header"><h2>仓库列表</h2></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>名称</th><th>编码</th><th>负责人</th><th>库存总量</th><th>操作</th></tr></thead>
+        <tbody>
+          {% for warehouse in warehouses %}
+          <tr>
+            <td>{{ warehouse.name }}</td>
+            <td>{{ warehouse.code }}</td>
+            <td>{{ warehouse.manager or "-" }}</td>
+            <td>{{ warehouse_stock.get(warehouse.id, 0) }}</td>
+            <td>
+              <form method="post" action="{{ url_for('warehouse_delete', warehouse_id=warehouse.id) }}" onsubmit="return confirm('确认删除这个仓库吗？')">
+                {{ csrf_field() }}
+                <button class="button ghost small danger" type="submit">删除</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="muted-cell">暂无仓库数据。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+</section>
+{% endblock %}

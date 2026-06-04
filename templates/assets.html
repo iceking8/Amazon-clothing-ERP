@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}资产管理 - 服装 ERP{% endblock %}
+{% block page_title %}资产管理{% endblock %}
+{% block content %}
+<section class="layout-two wide-left">
+  <article class="panel">
+    <div class="panel-header">
+      <h2>资产列表</h2>
+      <form method="get" class="inline-form filter-bar">
+        <input name="asset_keyword" value="{{ asset_keyword or '' }}" placeholder="搜索资产编号、名称、品牌、型号、序列号、保管人">
+        <select name="category">
+          <option value="">全部分类</option>
+          {% for item in categories %}
+          <option value="{{ item }}" {% if selected_category == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+        <select name="status">
+          <option value="">全部状态</option>
+          <option value="in_use" {% if selected_status == 'in_use' %}selected{% endif %}>使用中</option>
+          <option value="idle" {% if selected_status == 'idle' %}selected{% endif %}>闲置</option>
+          <option value="repair" {% if selected_status == 'repair' %}selected{% endif %}>维修中</option>
+          <option value="scrapped" {% if selected_status == 'scrapped' %}selected{% endif %}>已报废</option>
+        </select>
+        <button class="button ghost small" type="submit">筛选</button>
+        <a class="button ghost small" href="{{ url_for('asset_list') }}">清空</a>
+      </form>
+    </div>
+    <div class="table-wrap sticky-table-wrap">
+      <table class="interactive-table">
+        <thead>
+          <tr>
+            <th>资产编号</th>
+            <th>资产名称</th>
+            <th>分类</th>
+            <th>品牌/型号</th>
+            <th>资产价值</th>
+            <th>保管人</th>
+            <th>位置</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for asset in assets %}
+          <tr>
+            <td>{{ asset.asset_code }}</td>
+            <td>
+              {% if asset.image_path %}
+              <img class="asset-thumb" src="{{ url_for('static', filename=asset.image_path) }}" alt="{{ asset.name }}">
+              {% endif %}
+              <strong>{{ asset.name }}</strong>
+              {% if asset.serial_no %}<div class="muted">序列号：{{ asset.serial_no }}</div>{% endif %}
+            </td>
+            <td>{{ asset.category or "-" }}</td>
+            <td>{{ asset.brand or "-" }} / {{ asset.model or "-" }}</td>
+            <td>{{ "%.2f"|format(asset.asset_value or 0) }}</td>
+            <td>{{ asset.keeper or "-" }}</td>
+            <td>{{ asset.location or "-" }}</td>
+            <td><span class="pill">{{ asset.status_label }}</span></td>
+            <td>
+              <details class="stack-item user-card" style="margin: 0 0 8px;">
+                <summary class="user-card-summary" style="padding: 0; min-height: auto;">
+                  <div class="user-card-meta">
+                    <span class="button ghost small user-card-toggle">编辑</span>
+                  </div>
+                </summary>
+                <div class="user-card-body">
+                  <form method="post" action="{{ url_for('asset_update', asset_id=asset.id, asset_keyword=asset_keyword, status=selected_status, category=selected_category) }}" class="form-grid compact-form" enctype="multipart/form-data">
+                    {{ csrf_field() }}
+                    <label><span>资产编号</span><input name="asset_code" value="{{ asset.asset_code }}" required></label>
+                    <label><span>资产名称</span><input name="name" value="{{ asset.name }}" required></label>
+                    <label><span>分类</span><input name="category" value="{{ asset.category }}"></label>
+                    <label><span>品牌</span><input name="brand" value="{{ asset.brand }}"></label>
+                    <label><span>型号</span><input name="model" value="{{ asset.model }}"></label>
+                    <label>
+                      <span>序列号</span>
+                      <div class="scan-input-group">
+                        <input name="serial_no" value="{{ asset.serial_no }}" data-scan-target-input>
+                        <button class="button ghost small" type="button" data-open-barcode-scanner>实时扫码</button>
+                        <button class="button ghost small" type="button" data-open-barcode-image>拍照识别</button>
+                        <input type="file" accept="image/*" capture="environment" hidden data-barcode-image-input>
+                      </div>
+                    </label>
+                    <label>
+                      <span>状态</span>
+                      <select name="status">
+                        <option value="in_use" {% if asset.status == 'in_use' %}selected{% endif %}>使用中</option>
+                        <option value="idle" {% if asset.status == 'idle' %}selected{% endif %}>闲置</option>
+                        <option value="repair" {% if asset.status == 'repair' %}selected{% endif %}>维修中</option>
+                        <option value="scrapped" {% if asset.status == 'scrapped' %}selected{% endif %}>已报废</option>
+                      </select>
+                    </label>
+                    <label><span>保管人</span><input name="keeper" value="{{ asset.keeper }}"></label>
+                    <label><span>位置</span><input name="location" value="{{ asset.location }}"></label>
+                    <label><span>购入日期</span><input type="date" name="purchase_date" value="{{ asset.purchase_date.isoformat() if asset.purchase_date else '' }}"></label>
+                    <label><span>资产价值</span><input type="number" name="asset_value" min="0" step="0.01" value="{{ asset.asset_value or 0 }}"></label>
+                    <label class="full">
+                      <span>资产图片</span>
+                      {% if asset.image_path %}
+                      <img class="asset-preview" src="{{ url_for('static', filename=asset.image_path) }}" alt="{{ asset.name }}">
+                      {% endif %}
+                      <input type="file" name="image_file" accept="image/*" capture="environment">
+                    </label>
+                    <label class="full"><span>备注</span><textarea name="remark">{{ asset.remark }}</textarea></label>
+                    <button class="button small" type="submit">保存修改</button>
+                  </form>
+                </div>
+              </details>
+              <form method="post" action="{{ url_for('asset_delete', asset_id=asset.id, asset_keyword=asset_keyword, status=selected_status, category=selected_category) }}" onsubmit="return confirm('确认删除这条资产吗？')">
+                {{ csrf_field() }}
+                <button class="button ghost small danger" type="submit">删除</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="9" class="muted-cell">暂无资产数据。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  <article class="panel sku-form-panel">
+    <div class="panel-header"><h2>新建资产</h2></div>
+    <form method="post" class="form-grid" enctype="multipart/form-data">
+      {{ csrf_field() }}
+      <label><span>资产编号</span><input name="asset_code" required placeholder="例如：IT-2026-001"></label>
+      <label><span>资产名称</span><input name="name" required placeholder="例如：显示器、办公椅、打印机"></label>
+      <label><span>分类</span><input name="category" placeholder="例如：显示器、电脑主机、键盘鼠标"></label>
+      <label><span>品牌</span><input name="brand" placeholder="例如：Dell、联想、华为"></label>
+      <label><span>型号</span><input name="model" placeholder="例如：P2422H"></label>
+      <label>
+        <span>序列号</span>
+        <div class="scan-input-group">
+          <input name="serial_no" placeholder="设备序列号，可不填" data-scan-target-input>
+          <button class="button ghost small" type="button" data-open-barcode-scanner>实时扫码</button>
+          <button class="button ghost small" type="button" data-open-barcode-image>拍照识别</button>
+          <input type="file" accept="image/*" capture="environment" hidden data-barcode-image-input>
+        </div>
+      </label>
+      <label>
+        <span>状态</span>
+        <select name="status">
+          <option value="in_use">使用中</option>
+          <option value="idle">闲置</option>
+          <option value="repair">维修中</option>
+          <option value="scrapped">已报废</option>
+        </select>
+      </label>
+      <label><span>保管人</span><input name="keeper" placeholder="例如：张三"></label>
+      <label><span>位置</span><input name="location" placeholder="例如：办公室A区、仓库二层"></label>
+      <label><span>购入日期</span><input type="date" name="purchase_date"></label>
+      <label><span>资产价值</span><input type="number" name="asset_value" min="0" step="0.01" value="0"></label>
+      <label class="full"><span>资产图片</span><input type="file" name="image_file" accept="image/*" capture="environment"></label>
+      <label class="full"><span>备注</span><textarea name="remark" placeholder="可选，记录配置、用途、配件等"></textarea></label>
+      <button class="button full" type="submit">保存资产</button>
+    </form>
+  </article>
+</section>
+
+<div class="scanner-modal" data-barcode-scanner hidden>
+  <div class="scanner-backdrop" data-close-barcode-scanner></div>
+  <div class="scanner-dialog">
+    <div class="panel-header">
+      <h2>扫码序列号</h2>
+      <button class="button ghost small" type="button" data-close-barcode-scanner>关闭</button>
+    </div>
+    <p class="muted">请将设备序列号条形码放到镜头中央，建议使用手机后置摄像头。</p>
+    <video class="scanner-video" autoplay playsinline muted data-scanner-video></video>
+    <div class="inline-actions">
+      <span class="pill" data-scanner-status>正在启动摄像头…</span>
+      <button class="button ghost small" type="button" data-close-barcode-scanner>取消</button>
+    </div>
+  </div>
+</div>
+{% endblock %}

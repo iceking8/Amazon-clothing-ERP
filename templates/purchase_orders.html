@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}采购订单 - 苏客科技ERP{% endblock %}
+{% block page_title %}采购订单{% endblock %}
+{% block content %}
+<section class="layout-two wide-left">
+  <article class="panel">
+    <div class="panel-header">
+      <h2>订单列表</h2>
+      <form method="get" class="inline-form filter-bar">
+        <input name="sku_keyword" value="{{ sku_keyword or '' }}" placeholder="搜索 SKU 编码、名称、条码">
+        <input type="date" name="start_date" value="{{ start_date or '' }}">
+        <input type="date" name="end_date" value="{{ end_date or '' }}">
+        <button class="button ghost small" type="submit">筛选</button>
+        <a class="button ghost small" href="{{ url_for('purchase_order_list') }}">清空</a>
+      </form>
+    </div>
+    <div class="stack-list">
+      {% for order in orders %}
+      <div class="stack-item">
+        <div class="item-header">
+          <div>
+            <strong>{{ order.order_no }}</strong>
+            <p>{{ order.supplier.name }} / {{ order.warehouse.name }} / <span class="status-badge status-{{ order.status }}">{{ order.status_label }}</span></p>
+            <small>操作人：{{ order.operator_name or '-' }}</small>
+            {% if order.expected_date %}<small>预计到货：{{ order.expected_date.strftime("%Y-%m-%d") }}</small>{% endif %}
+          </div>
+          <div class="inline-actions">
+            {% if can_view_prices() %}<span class="pill">{{ "%.2f"|format(order.total_amount) }}</span>{% endif %}
+            <a class="button ghost small" href="{{ url_for('purchase_order_export', order_id=order.id) }}">下载订单</a>
+            {% if order.status != "received" and current_user.has_permission('stock.in') %}
+            <form method="post" action="{{ url_for('purchase_order_receive', order_id=order.id) }}" onsubmit="return confirm('确认收货后将自动更新库存，是否继续？')">
+              {{ csrf_field() }}
+              <button class="button small" type="submit">确认收货</button>
+            </form>
+            {% endif %}
+            <form method="post" action="{{ url_for('purchase_order_delete', order_id=order.id) }}" onsubmit="return confirm('确认删除这张采购订单吗？如果已收货，会同步回滚入库记录和库存。')">
+              {{ csrf_field() }}
+              <button class="button ghost small danger" type="submit">删除订单</button>
+            </form>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>SKU</th><th>商品</th><th>规格</th><th>数量</th>{% if can_view_prices() %}<th>单价</th>{% endif %}</tr></thead>
+            <tbody>
+              {% for item in order.items %}
+              <tr>
+                <td>{{ item.sku.sku_code }}</td>
+                <td>{{ item.sku.name }}</td>
+                <td>{{ item.sku.color or '-' }} / {{ item.sku.size or '-' }}</td>
+                <td>{{ item.quantity }}</td>
+                {% if can_view_prices() %}<td>{{ "%.2f"|format(item.unit_price) }}</td>{% endif %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% else %}
+      <p class="muted">暂无采购订单。</p>
+      {% endfor %}
+    </div>
+  </article>
+  <article class="panel">
+    <div class="panel-header"><h2>新建采购订单</h2></div>
+    <form method="post" class="form-grid">
+      {{ csrf_field() }}
+      <label><span>订单号</span><input name="order_no" placeholder="留空自动生成"></label>
+      <label><span>预计到货日期</span><input type="date" name="expected_date"></label>
+      <label><span>供应商</span>
+        <select name="supplier_id" required>
+          <option value="">请选择供应商</option>
+          {% for supplier in suppliers %}
+          <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label><span>目标仓库</span>
+        <select name="warehouse_id" required>
+          <option value="">请选择仓库</option>
+          {% for warehouse in warehouses %}
+          <option value="{{ warehouse.id }}">{{ warehouse.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label><span>订单状态</span>
+        <select name="status">
+          <option value="submitted">已提交</option>
+          <option value="placed">已下单</option>
+          <option value="partial">部分收货</option>
+          <option value="draft">草稿</option>
+        </select>
+      </label>
+      <label class="full"><span>备注</span><textarea name="remark" placeholder="可选备注"></textarea></label>
+      <datalist id="purchase-sku-options">
+        {% for sku in skus %}
+        <option value="{{ sku.sku_code }} - {{ sku.name }} / {{ sku.color }} / {{ sku.size }}" data-sku-id="{{ sku.id }}"></option>
+        {% endfor %}
+      </datalist>
+      <div class="full dynamic-box" data-prefix="purchase">
+        <div class="dynamic-header">
+          <span>采购明细</span>
+          <button class="button ghost small" type="button" data-add-row>添加一行</button>
+        </div>
+        <div class="dynamic-rows" data-rows></div>
+        <template data-row-template>
+          <div class="dynamic-row">
+            <div class="sku-picker" data-sku-picker>
+              <input type="hidden" name="purchase_sku_id" data-sku-picker-value>
+              <input type="search" list="purchase-sku-options" placeholder="搜索 SKU 编码 / 名称 / 颜色 / 尺码" autocomplete="off" data-sku-picker-input>
+            </div>
+            <input name="purchase_quantity" type="number" min="1" placeholder="数量">
+            {% if can_view_prices() %}<input name="purchase_price" type="number" step="0.01" min="0" placeholder="单价">{% endif %}
+            <button class="button ghost small danger" type="button" data-remove-row>删除</button>
+          </div>
+        </template>
+      </div>
+      <button class="button full action-short-blue" type="submit">保存采购订单</button>
+    </form>
+  </article>
+</section>
+{% endblock %}
