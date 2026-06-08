@@ -1180,6 +1180,15 @@ def normalize_external_sku(value):
     return text.strip()
 
 
+def build_external_sku_compatibility_key(value):
+    parts = [part for part in re.split(r"[^a-z0-9]+", normalize_external_sku(value).casefold()) if part]
+    if not parts:
+        return ""
+    if re.fullmatch(r"[a-z]*\d+t", parts[0]):
+        parts[0] = parts[0][:-1]
+    return "".join(parts).replace("winered", "winred")
+
+
 def parse_date(value):
     if not value:
         return None
@@ -1222,6 +1231,27 @@ def get_date_filters():
     end_date = parse_date(request.args.get("end_date", "").strip())
     sku_keyword = request.args.get("sku_keyword", "").strip()
     return sku_keyword, start_date, end_date
+
+
+def get_history_filters():
+    sku_keyword, start_date, end_date = get_date_filters()
+    selected_month = request.args.get("month", "").strip()
+    month_match = re.fullmatch(r"(\d{4})-(\d{2})", selected_month)
+    if month_match:
+        year = int(month_match.group(1))
+        month = int(month_match.group(2))
+        if 1 <= month <= 12:
+            start_date = datetime(year, month, 1).date()
+            if month == 12:
+                next_month = datetime(year + 1, 1, 1).date()
+            else:
+                next_month = datetime(year, month + 1, 1).date()
+            end_date = next_month - timedelta(days=1)
+        else:
+            selected_month = ""
+    else:
+        selected_month = ""
+    return sku_keyword, start_date, end_date, selected_month
 
 
 def apply_datetime_range(query, column, start_date=None, end_date=None):
@@ -1748,6 +1778,93 @@ def parse_order_items(prefix, *, allow_price=True):
             continue
         items.append({"sku_id": parsed_sku_id, "quantity": parsed_qty, "unit_price": parsed_price})
     return items
+
+
+def parse_purchase_order_import(file_storage, *, allow_price=True, user=None):
+    rows = parse_uploaded_table(file_storage)
+    if not rows:
+        raise ValueError("导入文件为空。")
+
+    header_row_index, matched_indexes = find_report_header_row(
+        rows,
+        [
+            [
+                ("sku编码", "sku编号", "仓库sku", "商品sku"),
+                ("sku",),
+            ],
+            [
+                ("采购数量", "订购数量", "数量"),
+                ("quantity", "qty"),
+            ],
+        ],
+    )
+    if not matched_indexes:
+        raise ValueError("未识别到表头，请至少包含“SKU编码”和“采购数量”列。")
+
+    sku_index, quantity_index = matched_indexes
+    normalized_headers = [normalize_report_header(cell) for cell in rows[header_row_index]]
+    price_index = find_report_header_index(
+        normalized_headers,
+        [
+            ("采购单价", "含税单价", "单价"),
+            ("unitprice", "price"),
+        ],
+    )
+
+    sku_query = apply_sku_scope(SKU.query, SKU.id, user=user)
+    available_skus = sku_query.all()
+    sku_by_code = {sku.sku_code.strip().lower(): sku for sku in available_skus if sku.sku_code.strip()}
+    sku_by_barcode = {sku.barcode.strip().lower(): sku for sku in available_skus if sku.barcode and sku.barcode.strip()}
+
+    imported_items = []
+    seen_sku_ids = set()
+    errors = []
+    for row_number, row in enumerate(rows[header_row_index + 1 :], start=header_row_index + 2):
+        sku_value = row[sku_index].strip() if sku_index < len(row) else ""
+        quantity_value = row[quantity_index].strip() if quantity_index < len(row) else ""
+        price_value = row[price_index].strip() if price_index is not None and price_index < len(row) else ""
+        if not sku_value and not quantity_value and not price_value:
+            continue
+        if not sku_value:
+            errors.append(f"第 {row_number} 行：SKU编码不能为空。")
+            continue
+
+        sku_lookup_key = sku_value.lower()
+        sku = sku_by_code.get(sku_lookup_key) or sku_by_barcode.get(sku_lookup_key)
+        if not sku:
+            errors.append(f"第 {row_number} 行：SKU {sku_value} 不存在或当前账号无权使用。")
+            continue
+        if sku.id in seen_sku_ids:
+            errors.append(f"第 {row_number} 行：SKU {sku.sku_code} 重复，请合并为一行。")
+            continue
+
+        quantity = parse_int(quantity_value)
+        if quantity <= 0:
+            errors.append(f"第 {row_number} 行：采购数量必须为大于 0 的整数。")
+            continue
+
+        unit_price = Decimal("0")
+        if allow_price:
+            unit_price = parse_decimal(price_value) if price_value else (sku.cost_price or Decimal("0"))
+            if unit_price < 0:
+                errors.append(f"第 {row_number} 行：采购单价不能小于 0。")
+                continue
+
+        seen_sku_ids.add(sku.id)
+        imported_items.append(
+            {
+                "sku_id": sku.id,
+                "sku_display": f"{sku.sku_code} - {sku.name} / {sku.color} / {sku.size}",
+                "quantity": quantity,
+                "unit_price": unit_price,
+            }
+        )
+
+    if errors:
+        raise ValueError("\n".join(errors[:20]))
+    if not imported_items:
+        raise ValueError("导入文件中没有可用的采购明细。")
+    return imported_items
 
 
 def parse_shipment_sheet_items(*, box_count, warehouse_id, user=None, exclude_shipment_id=None):
@@ -3502,23 +3619,60 @@ def is_fba_shipment_table(rows):
 
 
 def resolve_import_sku_codes(raw_sku_codes, *, user=None):
-    normalized_codes = [code.strip() for code in raw_sku_codes if (code or "").strip()]
-    if not normalized_codes:
+    codes_by_lookup_key = defaultdict(list)
+    for raw_code in raw_sku_codes:
+        code = normalize_external_sku(raw_code)
+        if code:
+            codes_by_lookup_key[code.casefold()].append(code)
+    if not codes_by_lookup_key:
         return {}, []
 
-    exact_skus = SKU.query.filter(SKU.sku_code.in_(normalized_codes)).all()
-    resolved_map = {sku.sku_code: sku for sku in exact_skus}
-    missing_codes = [code for code in normalized_codes if code not in resolved_map]
+    lookup_keys = list(codes_by_lookup_key)
+    exact_skus = SKU.query.filter(func.lower(func.trim(SKU.sku_code)).in_(lookup_keys)).all()
+    resolved_map = {}
+    for sku in exact_skus:
+        lookup_key = normalize_external_sku(sku.sku_code).casefold()
+        for code in codes_by_lookup_key.get(lookup_key, []):
+            resolved_map[code] = sku
+    missing_codes = [code for codes in codes_by_lookup_key.values() for code in codes if code not in resolved_map]
 
     current = user or g.get("user")
     if current and missing_codes:
-        mapping_rows = SKUMapping.query.join(SKUMapping.sku).filter(
-            SKUMapping.user_id == current.id,
-            SKUMapping.external_sku_code.in_(missing_codes),
-        ).all()
+        missing_lookup_keys = {code.casefold() for code in missing_codes}
+        scoped_mapping_query = SKUMapping.query.join(SKUMapping.sku)
+        if not can_manage_all_sku_mappings(current):
+            scoped_mapping_query = scoped_mapping_query.filter(SKUMapping.user_id == current.id)
+        mapping_query = scoped_mapping_query.filter(
+            func.lower(func.trim(SKUMapping.external_sku_code)).in_(missing_lookup_keys)
+        )
+        mapping_rows = mapping_query.all()
+        mapping_rows.sort(key=lambda mapping: (mapping.user_id != current.id, mapping.id))
+        mapping_by_lookup_key = {}
         for mapping in mapping_rows:
-            resolved_map[mapping.external_sku_code] = mapping.sku
-        missing_codes = [code for code in normalized_codes if code not in resolved_map]
+            lookup_key = normalize_external_sku(mapping.external_sku_code).casefold()
+            mapping_by_lookup_key.setdefault(lookup_key, mapping.sku)
+        for code in missing_codes:
+            mapped_sku = mapping_by_lookup_key.get(code.casefold())
+            if mapped_sku:
+                resolved_map[code] = mapped_sku
+        missing_codes = [code for code in missing_codes if code not in resolved_map]
+
+        if missing_codes:
+            missing_compatibility_keys = {
+                build_external_sku_compatibility_key(code)
+                for code in missing_codes
+                if build_external_sku_compatibility_key(code)
+            }
+            compatibility_candidates = defaultdict(dict)
+            for mapping in scoped_mapping_query.all():
+                compatibility_key = build_external_sku_compatibility_key(mapping.external_sku_code)
+                if compatibility_key in missing_compatibility_keys:
+                    compatibility_candidates[compatibility_key][mapping.sku_id] = mapping.sku
+            for code in missing_codes:
+                candidates = compatibility_candidates.get(build_external_sku_compatibility_key(code), {})
+                if len(candidates) == 1:
+                    resolved_map[code] = next(iter(candidates.values()))
+            missing_codes = [code for code in missing_codes if code not in resolved_map]
 
     return resolved_map, missing_codes
 
@@ -3560,7 +3714,7 @@ def parse_shipment_import(file_storage, *, include_customer, user=None):
         cells = [cell.strip() for cell in row]
         if not any(cells):
             continue
-        sku_code = cells[seller_sku_col] if seller_sku_col < len(cells) else ""
+        sku_code = normalize_external_sku(cells[seller_sku_col] if seller_sku_col < len(cells) else "")
         qty_raw = cells[shipped_qty_col] if shipped_qty_col < len(cells) else ""
         quantity = parse_int(qty_raw)
         if not sku_code or quantity <= 0:
@@ -8005,45 +8159,77 @@ def purchase_calculator_generate_order():
 @login_required
 @permission_required("purchase.manage")
 def purchase_order_list():
+    purchase_form = {}
     if request.method == "POST":
-        items = parse_order_items("purchase", allow_price=can_view_prices())
-        supplier_id = parse_int(request.form.get("supplier_id"))
-        warehouse_id = parse_int(request.form.get("warehouse_id"))
-        supplier = db.session.get(Supplier, supplier_id)
-        warehouse = db.session.get(Warehouse, warehouse_id)
-        item_skus = validate_entity_ids(SKU, [item["sku_id"] for item in items])
-        expected_date_raw = request.form.get("expected_date", "").strip()
-        expected_date = parse_date(expected_date_raw)
+        if request.form.get("action") == "import":
+            purchase_form = {
+                "order_no": request.form.get("order_no", "").strip(),
+                "expected_date": request.form.get("expected_date", "").strip(),
+                "supplier_id": request.form.get("supplier_id", "").strip(),
+                "warehouse_id": request.form.get("warehouse_id", "").strip(),
+                "status": request.form.get("status", "submitted").strip(),
+                "remark": request.form.get("remark", "").strip(),
+                "items": [],
+            }
+            upload = request.files.get("purchase_import_file")
+            if not upload or not upload.filename:
+                flash("请选择要上传的采购明细表格。", "error")
+            else:
+                extension = os.path.splitext(upload.filename.lower())[1]
+                if extension not in {".csv", ".tsv", ".txt", ".xlsx", ".xlsm"}:
+                    flash("采购明细仅支持 CSV、TSV 或 Excel 文件。", "error")
+                else:
+                    try:
+                        purchase_form["items"] = parse_purchase_order_import(
+                            upload,
+                            allow_price=can_view_prices(),
+                            user=g.user,
+                        )
+                        flash(f"已读取 {len(purchase_form['items'])} 条采购明细，请确认后保存采购订单。", "success")
+                    except (ValueError, InvalidOperation) as error:
+                        flash(f"采购明细导入失败：{error}", "error")
+        else:
+            items = parse_order_items("purchase", allow_price=can_view_prices())
+            supplier_id = parse_int(request.form.get("supplier_id"))
+            warehouse_id = parse_int(request.form.get("warehouse_id"))
+            supplier = db.session.get(Supplier, supplier_id)
+            warehouse = db.session.get(Warehouse, warehouse_id)
+            item_skus = validate_entity_ids(SKU, [item["sku_id"] for item in items])
+            expected_date_raw = request.form.get("expected_date", "").strip()
+            expected_date = parse_date(expected_date_raw)
 
-        if not items:
-            flash("请至少添加一条采购明细。", "error")
-            return redirect(url_for("purchase_order_list"))
-        if not supplier or not warehouse:
-            flash("供应商和仓库不能为空。", "error")
-            return redirect(url_for("purchase_order_list"))
-        if len(item_skus) != len({item["sku_id"] for item in items}):
-            flash("所选 SKU 中存在无效项。", "error")
-            return redirect(url_for("purchase_order_list"))
-        if expected_date_raw and not expected_date:
-            flash("预计到货日期格式不正确。", "error")
-            return redirect(url_for("purchase_order_list"))
+            if not items:
+                flash("请至少添加一条采购明细。", "error")
+                return redirect(url_for("purchase_order_list"))
+            if not supplier or not warehouse:
+                flash("供应商和仓库不能为空。", "error")
+                return redirect(url_for("purchase_order_list"))
+            if len(item_skus) != len({item["sku_id"] for item in items}):
+                flash("所选 SKU 中存在无效项。", "error")
+                return redirect(url_for("purchase_order_list"))
+            if not validate_sku_access([item["sku_id"] for item in items]):
+                flash("所选 SKU 中存在当前账号无权使用的项目。", "error")
+                return redirect(url_for("purchase_order_list"))
+            if expected_date_raw and not expected_date:
+                flash("预计到货日期格式不正确。", "error")
+                return redirect(url_for("purchase_order_list"))
 
-        order = PurchaseOrder(
-            order_no=request.form.get("order_no", "").strip() or build_unique_code("PO", PurchaseOrder, "order_no"),
-            supplier_id=supplier_id,
-            warehouse_id=warehouse_id,
-            operator_name=get_current_operator_name(),
-            status=normalize_status(request.form.get("status", "submitted"), PURCHASE_STATUSES - {"received"}, "submitted"),
-            remark=request.form.get("remark", "").strip(),
-            expected_date=expected_date,
-        )
-        for item in items:
-            order.items.append(PurchaseOrderItem(**item))
-        db.session.add(order)
-        log_operation("采购订单", "新增", "purchase_order", order.order_no, f"供应商：{supplier.name}；仓库：{warehouse.name}；明细：{len(items)}")
-        db.session.commit()
-        flash("采购订单创建成功。", "success")
-        return redirect(url_for("purchase_order_list"))
+            order = PurchaseOrder(
+                order_no=request.form.get("order_no", "").strip() or build_unique_code("PO", PurchaseOrder, "order_no"),
+                supplier_id=supplier_id,
+                warehouse_id=warehouse_id,
+                operator_name=get_current_operator_name(),
+                status=normalize_status(request.form.get("status", "submitted"), PURCHASE_STATUSES - {"received"}, "submitted"),
+                remark=request.form.get("remark", "").strip(),
+                expected_date=expected_date,
+            )
+            for item in items:
+                order.items.append(PurchaseOrderItem(**item))
+            db.session.add(order)
+            log_operation("采购订单", "新增", "purchase_order", order.order_no, f"供应商：{supplier.name}；仓库：{warehouse.name}；明细：{len(items)}")
+            db.session.commit()
+            flash("采购订单创建成功。", "success")
+            return redirect(url_for("purchase_order_list"))
 
     sku_keyword, start_date, end_date = get_date_filters()
     orders_query = PurchaseOrder.query
@@ -8053,15 +8239,99 @@ def purchase_order_list():
         orders_query = orders_query.join(PurchaseOrder.items).join(PurchaseOrderItem.sku).filter(sku_filter).distinct()
     orders_query = apply_datetime_range(orders_query, PurchaseOrder.created_at, start_date, end_date)
 
+    sku_query = apply_sku_scope(SKU.query, SKU.id)
     return render_template(
         "purchase_orders.html",
         orders=orders_query.order_by(PurchaseOrder.created_at.desc()).all(),
         suppliers=Supplier.query.order_by(Supplier.name.asc()).all(),
         warehouses=Warehouse.query.order_by(Warehouse.name.asc()).all(),
-        skus=SKU.query.order_by(SKU.name.asc()).all(),
+        skus=sku_query.order_by(SKU.name.asc()).all(),
+        purchase_form=purchase_form,
         sku_keyword=sku_keyword,
         start_date=start_date.isoformat() if start_date else "",
         end_date=end_date.isoformat() if end_date else "",
+    )
+
+
+@app.get("/purchase-orders/import-template")
+@login_required
+@permission_required("purchase.manage")
+def purchase_order_import_template():
+    try:
+        from openpyxl import Workbook
+        from openpyxl.comments import Comment
+        from openpyxl.styles import Alignment, Font, PatternFill
+    except ModuleNotFoundError:
+        flash("当前 Python 环境缺少 openpyxl，暂时无法下载采购导入模板。", "error")
+        return redirect(url_for("purchase_order_list"))
+
+    show_prices = can_view_prices()
+    headers = ["SKU编码（必填）", "采购数量（必填）"]
+    if show_prices:
+        headers.append("采购单价（可选，留空使用SKU成本价）")
+
+    workbook = Workbook()
+    detail_sheet = workbook.active
+    detail_sheet.title = "采购明细"
+    detail_sheet.freeze_panes = "A2"
+    detail_sheet.auto_filter.ref = f"A1:{'C' if show_prices else 'B'}201"
+    detail_sheet.append(headers)
+    header_fill = PatternFill("solid", fgColor="4F46E5")
+    for cell in detail_sheet[1]:
+        cell.font = Font(color="FFFFFF", bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    detail_sheet.row_dimensions[1].height = 26
+    detail_sheet.column_dimensions["A"].width = 26
+    detail_sheet.column_dimensions["B"].width = 20
+    if show_prices:
+        detail_sheet.column_dimensions["C"].width = 38
+    detail_sheet["A1"].comment = Comment("填写系统中的 SKU 编码，也支持填写商品条码。", "ERP")
+    detail_sheet["B1"].comment = Comment("必须填写大于 0 的整数。", "ERP")
+    if show_prices:
+        detail_sheet["C1"].comment = Comment("可留空，系统会自动带入当前 SKU 成本价。", "ERP")
+    for row_number in range(2, 202):
+        detail_sheet.cell(row=row_number, column=2).number_format = "0"
+        if show_prices:
+            detail_sheet.cell(row=row_number, column=3).number_format = "0.00"
+
+    instruction_sheet = workbook.create_sheet("填写说明")
+    instructions = [
+        ["采购订单导入模板"],
+        ["1. 在“采购明细”工作表中填写 SKU 编码和采购数量。"],
+        ["2. 每个 SKU 只能填写一行，重复 SKU 会被拒绝导入。"],
+        ["3. 单价可留空；有价格权限的账号留空时会使用当前 SKU 成本价。"],
+        ["4. 上传后系统只回填明细，不会立即创建订单，请在页面确认供应商、仓库等信息后保存。"],
+        ["5. “SKU参考”工作表列出了当前账号可使用的 SKU。"],
+    ]
+    for row in instructions:
+        instruction_sheet.append(row)
+    instruction_sheet["A1"].font = Font(size=16, bold=True, color="312E81")
+    instruction_sheet.column_dimensions["A"].width = 100
+    for row_number in range(2, len(instructions) + 1):
+        instruction_sheet.cell(row=row_number, column=1).alignment = Alignment(wrap_text=True, vertical="top")
+
+    reference_sheet = workbook.create_sheet("SKU参考")
+    reference_sheet.append(["SKU编码", "商品名称", "颜色", "尺码", "条码"])
+    for cell in reference_sheet[1]:
+        cell.font = Font(color="FFFFFF", bold=True)
+        cell.fill = header_fill
+    sku_query = apply_sku_scope(SKU.query, SKU.id)
+    for sku in sku_query.order_by(SKU.sku_code.asc()).all():
+        reference_sheet.append([sku.sku_code, sku.name, sku.color, sku.size, sku.barcode or ""])
+    reference_sheet.freeze_panes = "A2"
+    reference_sheet.auto_filter.ref = f"A1:E{max(reference_sheet.max_row, 1)}"
+    for column, width in {"A": 24, "B": 32, "C": 16, "D": 14, "E": 24}.items():
+        reference_sheet.column_dimensions[column].width = width
+
+    stream = BytesIO()
+    workbook.save(stream)
+    stream.seek(0)
+    return send_file(
+        stream,
+        as_attachment=True,
+        download_name="采购订单导入模板.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 
@@ -8189,29 +8459,46 @@ def inventory_in():
         flash("入库操作成功。", "success")
         return redirect(url_for("inventory_in"))
 
-    sku_keyword, start_date, end_date = get_date_filters()
+    selected_warehouse_id = parse_int(request.args.get("warehouse_id"))
+    sku_keyword, start_date, end_date, selected_month = get_history_filters()
     txns_query = InventoryTransaction.query.join(InventoryTransaction.sku).filter(InventoryTransaction.quantity > 0)
+    if selected_warehouse_id:
+        txns_query = txns_query.filter(InventoryTransaction.warehouse_id == selected_warehouse_id)
     sku_filter = build_sku_keyword_filter(sku_keyword)
     if sku_filter is not None:
         txns_query = txns_query.filter(sku_filter)
     txns_query = apply_datetime_range(txns_query, InventoryTransaction.created_at, start_date, end_date)
-    txns = txns_query.order_by(InventoryTransaction.created_at.desc()).limit(100).all()
+    page = max(parse_int(request.args.get("page"), 1), 1)
+    txns_pagination = txns_query.order_by(InventoryTransaction.created_at.desc()).paginate(
+        page=page,
+        per_page=50,
+        error_out=False,
+    )
+    summary = txns_query.with_entities(
+        func.count(InventoryTransaction.id),
+        func.coalesce(func.sum(InventoryTransaction.quantity), 0),
+        func.count(func.distinct(InventoryTransaction.sku_id)),
+        func.count(func.distinct(InventoryTransaction.warehouse_id)),
+    ).one()
     inbound_summary = {
-        "record_count": len(txns),
-        "quantity": sum(txn.quantity for txn in txns),
-        "sku_count": len({txn.sku_id for txn in txns}),
-        "warehouse_count": len({txn.warehouse_id for txn in txns}),
+        "record_count": summary[0],
+        "quantity": summary[1],
+        "sku_count": summary[2],
+        "warehouse_count": summary[3],
     }
     return render_template(
         "inventory_in.html",
         skus=SKU.query.order_by(SKU.name.asc()).all(),
         warehouses=Warehouse.query.order_by(Warehouse.name.asc()).all(),
         suppliers=Supplier.query.order_by(Supplier.name.asc()).all(),
-        txns=txns,
+        txns=txns_pagination.items,
+        txns_pagination=txns_pagination,
         inbound_summary=inbound_summary,
+        selected_warehouse_id=selected_warehouse_id,
         sku_keyword=sku_keyword,
         start_date=start_date.isoformat() if start_date else "",
         end_date=end_date.isoformat() if end_date else "",
+        selected_month=selected_month,
     )
 
 
@@ -8681,7 +8968,7 @@ def inventory():
 @permission_required("inventory.transaction.view")
 def inventory_transactions():
     selected_warehouse_id = parse_int(request.args.get("warehouse_id"))
-    sku_keyword, start_date, end_date = get_date_filters()
+    sku_keyword, start_date, end_date, selected_month = get_history_filters()
     sku_filter = build_sku_keyword_filter(sku_keyword)
 
     txns_query = apply_sku_scope(InventoryTransaction.query.join(InventoryTransaction.sku), InventoryTransaction.sku_id)
@@ -8690,15 +8977,23 @@ def inventory_transactions():
     if sku_filter is not None:
         txns_query = txns_query.filter(sku_filter)
     txns_query = apply_datetime_range(txns_query, InventoryTransaction.created_at, start_date, end_date)
+    page = max(parse_int(request.args.get("page"), 1), 1)
+    txns_pagination = txns_query.order_by(InventoryTransaction.created_at.desc()).paginate(
+        page=page,
+        per_page=50,
+        error_out=False,
+    )
 
     return render_template(
         "inventory_transactions.html",
-        recent_txns=txns_query.order_by(InventoryTransaction.created_at.desc()).limit(200).all(),
+        recent_txns=txns_pagination.items,
+        txns_pagination=txns_pagination,
         warehouses=Warehouse.query.order_by(Warehouse.name.asc()).all(),
         selected_warehouse_id=selected_warehouse_id,
         sku_keyword=sku_keyword,
         start_date=start_date.isoformat() if start_date else "",
         end_date=end_date.isoformat() if end_date else "",
+        selected_month=selected_month,
     )
 
 

@@ -204,6 +204,76 @@ class ERPRegressionTests(unittest.TestCase):
         self.assertIn('name="csrf_token"', body)
         self.assertIn("系统不再内置公开默认密码", body)
 
+    def test_import_sku_resolution_normalizes_codes_and_honors_mapping_scope(self):
+        suffix = self.unique_suffix()
+        with self.app.app_context():
+            admin = self.User.query.filter_by(username="admin").first()
+            sku = self.SKU.query.first()
+            operator = self.User(
+                username=f"mapping-owner-{suffix}",
+                full_name=f"Mapping Owner {suffix}",
+                password_hash="unused",
+            )
+            other_operator = self.User(
+                username=f"mapping-other-{suffix}",
+                full_name=f"Mapping Other {suffix}",
+                password_hash="unused",
+            )
+            self.db.session.add_all([operator, other_operator])
+            self.db.session.flush()
+            external_sku = f"E1081-WinRed-{suffix}"
+            self.db.session.add(
+                self.app_module.SKUMapping(
+                    user_id=operator.id,
+                    sku_id=sku.id,
+                    external_sku_code=external_sku.upper(),
+                )
+            )
+            self.db.session.commit()
+
+            imported_code = f"\ufeffE1081T-Wine-Red-{suffix.lower()}\u200b"
+            operator_map, operator_missing = self.app_module.resolve_import_sku_codes(
+                [imported_code],
+                user=operator,
+            )
+            admin_map, admin_missing = self.app_module.resolve_import_sku_codes(
+                [imported_code],
+                user=admin,
+            )
+            other_map, other_missing = self.app_module.resolve_import_sku_codes(
+                [imported_code],
+                user=other_operator,
+            )
+            ambiguous_sku = self.SKU(
+                sku_code=f"SKU-AMB-{suffix}",
+                name=f"Ambiguous Product {suffix}",
+                category="Test",
+            )
+            self.db.session.add(ambiguous_sku)
+            self.db.session.flush()
+            self.db.session.add(
+                self.app_module.SKUMapping(
+                    user_id=operator.id,
+                    sku_id=ambiguous_sku.id,
+                    external_sku_code=f"E1081T-WineRed-{suffix}",
+                )
+            )
+            self.db.session.commit()
+            ambiguous_map, ambiguous_missing = self.app_module.resolve_import_sku_codes(
+                [imported_code],
+                user=operator,
+            )
+
+        normalized_code = f"E1081T-Wine-Red-{suffix.lower()}"
+        self.assertEqual(operator_map[normalized_code].id, sku.id)
+        self.assertEqual(operator_missing, [])
+        self.assertEqual(admin_map[normalized_code].id, sku.id)
+        self.assertEqual(admin_missing, [])
+        self.assertEqual(other_map, {})
+        self.assertEqual(other_missing, [normalized_code])
+        self.assertEqual(ambiguous_map, {})
+        self.assertEqual(ambiguous_missing, [normalized_code])
+
     def test_system_info_page_is_available_for_admin(self):
         self.login()
         response = self.client.get("/system-info")
@@ -843,6 +913,59 @@ class ERPRegressionTests(unittest.TestCase):
         self.assertEqual(transactions_page.status_code, 200)
         self.assertIn(f"MO-{suffix}", transactions_body)
         self.assertIn("库存流水", transactions_body)
+
+    def test_inventory_history_can_be_filtered_by_month_and_paginated(self):
+        self.login()
+        suffix = self.unique_suffix()
+        supplier, customer, warehouse, sku = self.create_master_data(suffix)
+
+        with self.app.app_context():
+            for index in range(51):
+                self.db.session.add(
+                    self.InventoryTransaction(
+                        sku_id=sku.id,
+                        warehouse_id=warehouse.id,
+                        supplier_id=supplier.id,
+                        quantity=1,
+                        transaction_type="manual_inbound",
+                        reference_type="manual_inbound_order",
+                        reference_no=f"APR-{suffix}-{index:02d}",
+                        created_at=datetime(2026, 4, 1) + timedelta(days=index % 29, minutes=index),
+                    )
+                )
+            self.db.session.add(
+                self.InventoryTransaction(
+                    sku_id=sku.id,
+                    warehouse_id=warehouse.id,
+                    supplier_id=supplier.id,
+                    quantity=1,
+                    transaction_type="manual_inbound",
+                    reference_type="manual_inbound_order",
+                    reference_no=f"MAY-{suffix}",
+                    created_at=datetime(2026, 5, 1),
+                )
+            )
+            self.db.session.commit()
+
+        inbound_page = self.client.get(f"/inventory/in?sku_keyword={suffix}&month=2026-04")
+        inbound_body = inbound_page.get_data(as_text=True)
+        self.assertEqual(inbound_page.status_code, 200)
+        self.assertIn("查询月份", inbound_body)
+        self.assertIn("共 51 条，每页 50 条", inbound_body)
+        self.assertIn("第 1 / 2 页", inbound_body)
+        self.assertNotIn(f"MAY-{suffix}", inbound_body)
+
+        inbound_second_page = self.client.get(f"/inventory/in?sku_keyword={suffix}&month=2026-04&page=2")
+        inbound_second_body = inbound_second_page.get_data(as_text=True)
+        self.assertIn("第 2 / 2 页", inbound_second_body)
+        self.assertIn(sku.sku_code, inbound_second_body)
+
+        transactions_page = self.client.get(f"/inventory/transactions?sku_keyword={suffix}&month=2026-04&page=2")
+        transactions_body = transactions_page.get_data(as_text=True)
+        self.assertEqual(transactions_page.status_code, 200)
+        self.assertIn("第 2 / 2 页", transactions_body)
+        self.assertIn(f"APR-{suffix}-00", transactions_body)
+        self.assertNotIn(f"MAY-{suffix}", transactions_body)
 
     def test_inventory_flow_and_export_report(self):
         login_response = self.login()
@@ -2633,6 +2756,83 @@ class ERPRegressionTests(unittest.TestCase):
         exported_values = [cell.value for row in sheet.iter_rows(values_only=False) for cell in row]
         self.assertIn(sku.sku_code, exported_values)
         self.assertIn(7, exported_values)
+
+    def test_purchase_order_import_template_and_preview(self):
+        self.login()
+        suffix = self.unique_suffix()
+        supplier, _customer, warehouse, sku = self.create_master_data(suffix)
+        csrf = self.current_csrf()
+
+        template_response = self.client.get("/purchase-orders/import-template")
+        self.assertEqual(template_response.status_code, 200)
+        self.assertIn("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", template_response.content_type)
+        from openpyxl import Workbook, load_workbook
+
+        template_workbook = load_workbook(BytesIO(template_response.data))
+        self.assertEqual(template_workbook.sheetnames, ["采购明细", "填写说明", "SKU参考"])
+        self.assertEqual(template_workbook["采购明细"]["A1"].value, "SKU编码（必填）")
+        reference_values = [cell.value for cell in template_workbook["SKU参考"]["A"]]
+        self.assertIn(sku.sku_code, reference_values)
+
+        upload_workbook = Workbook()
+        upload_sheet = upload_workbook.active
+        upload_sheet.append(["SKU编码", "采购数量", "采购单价"])
+        upload_sheet.append([sku.sku_code, 12, 24.5])
+        upload_stream = BytesIO()
+        upload_workbook.save(upload_stream)
+        upload_stream.seek(0)
+
+        response = self.client.post(
+            "/purchase-orders",
+            data={
+                "csrf_token": csrf,
+                "action": "import",
+                "order_no": f"PO-IMPORT-{suffix}",
+                "expected_date": "2026-06-30",
+                "supplier_id": str(supplier.id),
+                "warehouse_id": str(warehouse.id),
+                "status": "draft",
+                "remark": "import preview",
+                "purchase_import_file": (upload_stream, "purchase-import.xlsx"),
+            },
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("已读取 1 条采购明细", body)
+        self.assertIn(sku.sku_code, body)
+        self.assertIn('value="12"', body)
+        self.assertIn('value="24.50"', body)
+        self.assertIn(f'option value="{supplier.id}" selected', body)
+        with self.app.app_context():
+            self.assertIsNone(self.PurchaseOrder.query.filter_by(order_no=f"PO-IMPORT-{suffix}").first())
+
+    def test_purchase_order_import_rejects_unknown_sku(self):
+        self.login()
+        csrf = self.current_csrf()
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["SKU编码", "采购数量"])
+        sheet.append(["UNKNOWN-SKU", 3])
+        upload_stream = BytesIO()
+        workbook.save(upload_stream)
+        upload_stream.seek(0)
+
+        response = self.client.post(
+            "/purchase-orders",
+            data={
+                "csrf_token": csrf,
+                "action": "import",
+                "purchase_import_file": (upload_stream, "purchase-import.xlsx"),
+            },
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("不存在或当前账号无权使用", response.get_data(as_text=True))
 
     def test_fba_rule_batch_mark_new_does_not_error(self):
         self.login()

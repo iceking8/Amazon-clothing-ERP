@@ -5,15 +5,27 @@
 <section class="layout-two wide-left">
   <article class="panel">
     <div class="panel-header">
-      <h2>最近入库记录</h2>
-      <form method="get" class="inline-form filter-bar">
-        <input name="sku_keyword" value="{{ sku_keyword or '' }}" placeholder="搜索 SKU 编码、名称、条码">
-        <input type="date" name="start_date" value="{{ start_date or '' }}">
-        <input type="date" name="end_date" value="{{ end_date or '' }}">
-        <button class="button ghost small" type="submit">筛选</button>
-        <a class="button ghost small" href="{{ url_for('inventory_in') }}">清空</a>
-      </form>
+      <div>
+        <h2>入库记录</h2>
+        <p class="muted">共 {{ txns_pagination.total }} 条，每页 50 条</p>
+      </div>
     </div>
+    <form method="get" class="inline-form history-filter">
+      <label class="filter-field"><span>仓库</span>
+        <select name="warehouse_id">
+          <option value="">全部仓库</option>
+          {% for warehouse in warehouses %}
+          <option value="{{ warehouse.id }}" {% if selected_warehouse_id == warehouse.id %}selected{% endif %}>{{ warehouse.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="filter-field filter-keyword"><span>SKU / 商品</span><input name="sku_keyword" value="{{ sku_keyword or '' }}" placeholder="搜索 SKU 编码、名称、条码"></label>
+      <label class="filter-field"><span>查询月份</span><input type="month" name="month" value="{{ selected_month or '' }}"></label>
+      <label class="filter-field"><span>开始日期</span><input type="date" name="start_date" value="{{ '' if selected_month else (start_date or '') }}"></label>
+      <label class="filter-field"><span>结束日期</span><input type="date" name="end_date" value="{{ '' if selected_month else (end_date or '') }}"></label>
+      <button class="button small" type="submit">查询历史记录</button>
+      <a class="button ghost small" href="{{ url_for('inventory_in') }}">清空</a>
+    </form>
     <div class="table-wrap sticky-table-wrap">
       <table class="interactive-table">
         <thead>
@@ -61,6 +73,22 @@
         </tbody>
       </table>
     </div>
+    {% if txns_pagination.pages > 1 %}
+    <nav class="pagination-bar" aria-label="入库记录分页">
+      {% set page_args = {'warehouse_id': selected_warehouse_id or '', 'sku_keyword': sku_keyword, 'month': selected_month, 'start_date': '' if selected_month else start_date, 'end_date': '' if selected_month else end_date} %}
+      {% if txns_pagination.has_prev %}
+      <a class="button ghost small" href="{{ url_for('inventory_in', page=txns_pagination.prev_num, **page_args) }}">上一页</a>
+      {% else %}
+      <span class="button ghost small disabled">上一页</span>
+      {% endif %}
+      <span class="pill">第 {{ txns_pagination.page }} / {{ txns_pagination.pages }} 页</span>
+      {% if txns_pagination.has_next %}
+      <a class="button ghost small" href="{{ url_for('inventory_in', page=txns_pagination.next_num, **page_args) }}">下一页</a>
+      {% else %}
+      <span class="button ghost small disabled">下一页</span>
+      {% endif %}
+    </nav>
+    {% endif %}
   </article>
   <article class="panel">
     <div class="panel-header"><h2>新建手工入库单</h2></div>
